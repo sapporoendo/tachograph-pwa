@@ -58,11 +58,8 @@ export default function CameraView() {
   }, []);
 
   const saveToPhotos = useCallback(() => {
-    if (!capturedImage) return;
-    // iOSでは <img> を長押し→保存が最も確実
-    // ここではimgを全画面表示して保存を促す
     setSaved(true);
-  }, [capturedImage]);
+  }, []);
 
   if (state === "idle") {
     return (
@@ -81,26 +78,17 @@ export default function CameraView() {
   if (state === "captured" && capturedImage) {
     return (
       <div style={{ position:"fixed", inset:0, background:"#0f172a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:"16px", padding:"16px" }}>
-        
-        {/* 撮影画像 */}
-        <img
-          src={capturedImage}
-          alt="撮影画像"
-          style={{ width:"100%", maxWidth:"400px", borderRadius:"12px" }}
-        />
-
-        {/* 保存方法の説明 */}
-        {saved ? (
+        <img src={capturedImage} alt="撮影画像" style={{ width:"100%", maxWidth:"400px", borderRadius:"12px" }} />
+        {saved && (
           <div style={{ background:"#1e293b", borderRadius:"12px", padding:"16px", maxWidth:"400px", width:"100%" }}>
             <p style={{ color:"#86efac", fontSize:"14px", textAlign:"center", marginBottom:"8px" }}>
-              📌 上の写真を長押し → 「写真に保存」を選んでください
+              📌 上の写真を長押し → 「写真に保存」
             </p>
             <p style={{ color:"#94a3b8", fontSize:"12px", textAlign:"center" }}>
-              iOSの制限のため、長押し保存が必要です
+              iOSの制限のため長押し保存が必要です
             </p>
           </div>
-        ) : null}
-
+        )}
         <div style={{ display:"flex", gap:"12px", width:"100%", maxWidth:"400px" }}>
           <button onClick={retake} style={{ flex:1, padding:"14px", background:"#334155", color:"white", borderRadius:"12px", border:"none", fontSize:"16px" }}>
             撮り直し
@@ -113,6 +101,11 @@ export default function CameraView() {
     );
   }
 
+  // cx, cy, r = 150, 150, 145 が viewBox上の座標
+  // 外周(チャート紙の縁): r=145
+  // 120km/h付近(r_out_frac=0.95): r=145*0.95/1 ≈ 138 → viewBox比で r=138
+  // 20km/h付近(r_in_frac=0.80):  r=145*0.80/1 ≈ 116 → viewBox比で r=116
+
   return (
     <div style={{ position:"fixed", inset:0, background:"black", overflow:"hidden" }}>
       <video
@@ -122,22 +115,42 @@ export default function CameraView() {
         muted
         style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }}
       />
+
+      {/* ガイドオーバーレイ */}
       <div
         onClick={capture}
-        style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", zIndex:10 }}
+        style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", zIndex:10 }}
       >
+        {/* 上部ラベル */}
+        <div style={{ color:"rgba(255,255,255,0.9)", fontSize:"13px", marginBottom:"8px", textShadow:"0 1px 4px black", textAlign:"center" }}>
+          円に合わせてタップで撮影
+        </div>
+
         <div style={{ position:"relative", width:"85vw", height:"85vw", maxWidth:"340px", maxHeight:"340px" }}>
           <svg viewBox="0 0 300 300" style={{ width:"100%", height:"100%", overflow:"visible" }}>
-            <circle cx="150" cy="150" r="145" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="3" strokeDasharray="10 6" />
-            <circle cx="150" cy="150" r="112" fill="none" stroke="rgba(96,165,250,0.9)" strokeWidth="2" strokeDasharray="5 4" />
+
+            {/* 外周円 ── チャート紙の縁に合わせる（白） */}
+            <circle cx="150" cy="150" r="145" fill="none" stroke="rgba(255,255,255,0.95)" strokeWidth="2.5" strokeDasharray="10 5" />
+
+            {/* 120km/h付近 ── 速度記録エリア外縁（赤） */}
+            <circle cx="150" cy="150" r="130" fill="none" stroke="rgba(255,80,80,0.9)" strokeWidth="2" strokeDasharray="6 4" />
+
+            {/* 20km/h付近 ── 速度記録エリア内縁（青） */}
+            <circle cx="150" cy="150" r="106" fill="none" stroke="rgba(96,165,250,0.9)" strokeWidth="2" strokeDasharray="5 4" />
+
+            {/* 中心十字 */}
             <line x1="130" y1="150" x2="170" y2="150" stroke="white" strokeWidth="2" />
             <line x1="150" y1="130" x2="150" y2="170" stroke="white" strokeWidth="2" />
+
+            {/* 凡例ラベル */}
+            <text x="152" y="6" fill="rgba(255,255,255,0.9)" fontSize="10" fontFamily="sans-serif">チャート紙の縁</text>
+            <text x="152" y="21" fill="rgba(255,100,100,0.9)" fontSize="10" fontFamily="sans-serif">120km/h付近</text>
+            <text x="152" y="36" fill="rgba(96,165,250,0.9)" fontSize="10" fontFamily="sans-serif">20km/h付近</text>
+
           </svg>
-          <div style={{ position:"absolute", bottom:"-36px", left:"50%", transform:"translateX(-50%)", color:"rgba(255,255,255,0.85)", fontSize:"14px", whiteSpace:"nowrap", textShadow:"0 1px 4px black" }}>
-            円の中をタップして撮影
-          </div>
         </div>
       </div>
+
       <canvas ref={canvasRef} style={{ display:"none" }} />
     </div>
   );
