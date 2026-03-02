@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 
-type CaptureState = "idle" | "preview" | "captured";
+type CaptureState = "idle" | "preview" | "focusing" | "captured";
 
 export default function CameraView() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -35,7 +35,7 @@ export default function CameraView() {
     }
   }, [state]);
 
-  const capture = useCallback(() => {
+  const doCapture = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
@@ -50,6 +50,17 @@ export default function CameraView() {
     setState("captured");
     setSaved(false);
   }, []);
+
+  // タップ → ピント合わせ → 1.2秒後に撮影
+  const handleTap = useCallback(() => {
+    if (state !== "preview") return;
+    setState("focusing");
+
+    // iOSではfocusMode APIが使えないため、安定待機後に撮影
+    setTimeout(() => {
+      doCapture();
+    }, 1200);
+  }, [state, doCapture]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
@@ -101,10 +112,7 @@ export default function CameraView() {
     );
   }
 
-  // cx, cy, r = 150, 150, 145 が viewBox上の座標
-  // 外周(チャート紙の縁): r=145
-  // 120km/h付近(r_out_frac=0.95): r=145*0.95/1 ≈ 138 → viewBox比で r=138
-  // 20km/h付近(r_in_frac=0.80):  r=145*0.80/1 ≈ 116 → viewBox比で r=116
+  const isFocusing = state === "focusing";
 
   return (
     <div style={{ position:"fixed", inset:0, background:"black", overflow:"hidden" }}>
@@ -116,37 +124,43 @@ export default function CameraView() {
         style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }}
       />
 
-      {/* ガイドオーバーレイ */}
       <div
-        onClick={capture}
+        onClick={handleTap}
         style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", zIndex:10 }}
       >
-        {/* 上部ラベル */}
+        {/* 上部メッセージ */}
         <div style={{ color:"rgba(255,255,255,0.9)", fontSize:"13px", marginBottom:"8px", textShadow:"0 1px 4px black", textAlign:"center" }}>
-          円に合わせてタップで撮影
+          {isFocusing ? "📸 ピント合わせ中..." : "円に合わせてタップで撮影"}
         </div>
 
         <div style={{ position:"relative", width:"85vw", height:"85vw", maxWidth:"340px", maxHeight:"340px" }}>
           <svg viewBox="0 0 300 300" style={{ width:"100%", height:"100%", overflow:"visible" }}>
 
-            {/* 外周円 ── チャート紙の縁に合わせる（白） */}
-            <circle cx="150" cy="150" r="145" fill="none" stroke="rgba(255,255,255,0.95)" strokeWidth="2.5" strokeDasharray="10 5" />
+            {/* 外周円（白） */}
+            <circle cx="150" cy="150" r="145" fill="none"
+              stroke={isFocusing ? "rgba(250,204,21,0.95)" : "rgba(255,255,255,0.95)"}
+              strokeWidth="2.5" strokeDasharray="10 5" />
 
-            {/* 120km/h付近 ── 速度記録エリア外縁（赤） */}
-            <circle cx="150" cy="150" r="130" fill="none" stroke="rgba(255,80,80,0.9)" strokeWidth="2" strokeDasharray="6 4" />
+            {/* 120km/h（赤） */}
+            <circle cx="150" cy="150" r="130" fill="none"
+              stroke={isFocusing ? "rgba(250,204,21,0.8)" : "rgba(255,80,80,0.9)"}
+              strokeWidth="2" strokeDasharray="6 4" />
 
-            {/* 20km/h付近 ── 速度記録エリア内縁（青） */}
-            <circle cx="150" cy="150" r="106" fill="none" stroke="rgba(96,165,250,0.9)" strokeWidth="2" strokeDasharray="5 4" />
+            {/* 20km/h（青） */}
+            <circle cx="150" cy="150" r="106" fill="none"
+              stroke={isFocusing ? "rgba(250,204,21,0.8)" : "rgba(96,165,250,0.9)"}
+              strokeWidth="2" strokeDasharray="5 4" />
 
             {/* 中心十字 */}
             <line x1="130" y1="150" x2="170" y2="150" stroke="white" strokeWidth="2" />
             <line x1="150" y1="130" x2="150" y2="170" stroke="white" strokeWidth="2" />
 
-            {/* 凡例ラベル */}
-            <text x="152" y="6" fill="rgba(255,255,255,0.9)" fontSize="10" fontFamily="sans-serif">チャート紙の縁</text>
-            <text x="152" y="21" fill="rgba(255,100,100,0.9)" fontSize="10" fontFamily="sans-serif">120km/h付近</text>
-            <text x="152" y="36" fill="rgba(96,165,250,0.9)" fontSize="10" fontFamily="sans-serif">20km/h付近</text>
-
+            {/* 凡例 */}
+            {!isFocusing && <>
+              <text x="152" y="6" fill="rgba(255,255,255,0.9)" fontSize="10" fontFamily="sans-serif">チャート紙の縁</text>
+              <text x="152" y="21" fill="rgba(255,100,100,0.9)" fontSize="10" fontFamily="sans-serif">120km/h付近</text>
+              <text x="152" y="36" fill="rgba(96,165,250,0.9)" fontSize="10" fontFamily="sans-serif">20km/h付近</text>
+            </>}
           </svg>
         </div>
       </div>
