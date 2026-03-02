@@ -29,9 +29,8 @@ export default function CameraView() {
 
   useEffect(() => {
     if (state === "preview" && videoRef.current && streamRef.current) {
-      const video = videoRef.current;
-      video.srcObject = streamRef.current;
-      video.play().catch(console.error);
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(console.error);
     }
   }, [state]);
 
@@ -65,69 +64,55 @@ export default function CameraView() {
 
   if (state === "idle") {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-900 gap-6 p-4">
-        <p className="text-slate-400 text-sm text-center">
+      <div style={{ position:"fixed", inset:0, background:"#0f172a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:"24px", padding:"16px" }}>
+        <p style={{ color:"#94a3b8", fontSize:"14px", textAlign:"center" }}>
           タコグラフのチャート紙をガイド円に合わせて撮影してください
         </p>
-        <button
-          onClick={startCamera}
-          className="px-8 py-4 bg-blue-600 rounded-2xl text-white font-semibold text-lg"
-        >
+        <button onClick={startCamera} style={{ padding:"16px 32px", background:"#2563eb", color:"white", borderRadius:"16px", fontSize:"18px", fontWeight:"bold", border:"none" }}>
           カメラを起動
         </button>
-        {error && <p className="text-red-400 text-sm text-center px-4">{error}</p>}
+        {error && <p style={{ color:"#f87171", fontSize:"14px", textAlign:"center" }}>{error}</p>}
       </div>
     );
   }
 
   if (state === "captured" && capturedImage) {
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-900 gap-4 p-4">
-        <img src={capturedImage} alt="撮影画像" className="w-full max-w-sm rounded-xl" />
-        <div className="flex gap-3 w-full max-w-sm">
-          <button onClick={retake} className="flex-1 py-3 bg-slate-700 rounded-xl text-white font-medium">
-            撮り直し
-          </button>
-          <button onClick={save} className="flex-1 py-3 bg-green-600 rounded-xl text-white font-medium">
-            保存
-          </button>
+      <div style={{ position:"fixed", inset:0, background:"#0f172a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:"16px", padding:"16px" }}>
+        <img src={capturedImage} alt="撮影画像" style={{ width:"100%", maxWidth:"400px", borderRadius:"12px" }} />
+        <div style={{ display:"flex", gap:"12px", width:"100%", maxWidth:"400px" }}>
+          <button onClick={retake} style={{ flex:1, padding:"12px", background:"#334155", color:"white", borderRadius:"12px", border:"none", fontSize:"16px" }}>撮り直し</button>
+          <button onClick={save} style={{ flex:1, padding:"12px", background:"#16a34a", color:"white", borderRadius:"12px", border:"none", fontSize:"16px" }}>保存</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black">
-      {/* 全画面カメラ映像 */}
+    <div style={{ position:"fixed", inset:0, background:"black" }}>
       <video
         ref={videoRef}
         playsInline
         autoPlay
         muted
-        className="absolute inset-0 w-full h-full object-cover"
+        style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", objectFit:"cover" }}
       />
-      {/* ガイド円オーバーレイ */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <svg
-          viewBox="0 0 300 300"
-          className="w-4/5 max-w-xs pointer-events-none"
-        >
+      {/* ガイド円とボタンを最前面に */}
+      <div style={{ position:"absolute", inset:0, zIndex:10, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
+        <svg viewBox="0 0 300 300" style={{ width:"80vw", maxWidth:"320px" }}>
           <circle cx="150" cy="150" r="140" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="2.5" strokeDasharray="8 6" />
           <circle cx="150" cy="150" r="108" fill="none" stroke="rgba(96,165,250,0.8)" strokeWidth="2" strokeDasharray="4 4" />
           <line x1="135" y1="150" x2="165" y2="150" stroke="white" strokeWidth="1.5" />
           <line x1="150" y1="135" x2="150" y2="165" stroke="white" strokeWidth="1.5" />
-          <text x="150" y="20" textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="12" fontFamily="sans-serif">
-            円に合わせてください
-          </text>
+          <text x="150" y="18" textAnchor="middle" fill="rgba(255,255,255,0.9)" fontSize="13" fontFamily="sans-serif">円に合わせてください</text>
         </svg>
       </div>
-      {/* 撮影ボタン */}
       <button
         onClick={capture}
-        className="absolute bottom-12 left-1/2 -translate-x-1/2 w-20 h-20 rounded-full bg-white border-4 border-gray-300 shadow-xl active:scale-95 transition-transform"
+        style={{ position:"absolute", bottom:"48px", left:"50%", transform:"translateX(-50%)", width:"80px", height:"80px", borderRadius:"50%", background:"white", border:"4px solid #d1d5db", zIndex:20, pointerEvents:"auto" }}
         aria-label="撮影"
       />
-      <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={canvasRef} style={{ display:"none" }} />
     </div>
   );
 }
