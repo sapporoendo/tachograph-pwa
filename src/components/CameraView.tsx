@@ -344,6 +344,7 @@ export default function CameraView() {
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+  const prevStatusRef = useRef<DistanceStatus>("unknown");
 
   const [state, setState] = useState<CaptureState>("idle");
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -366,7 +367,14 @@ export default function CameraView() {
       const canvas = analysisCanvasRef.current;
       if (video && canvas && video.readyState >= 2) {
         const result = analyzeFrame(video, canvas);
-        setDistResult(result);
+        // ヒステリシス：一度OKになったら緩い条件(30%〜58%)で維持→チラつき防止
+        const prev = prevStatusRef.current;
+        let finalResult = result;
+        if (prev === "ok" && result.ratio >= 0.30 && result.ratio <= 0.58) {
+          finalResult = { status: "ok", ratio: result.ratio, message: "ちょうどいい！撮影できます" };
+        }
+        prevStatusRef.current = finalResult.status;
+        setDistResult(finalResult);
       }
       rafRef.current = requestAnimationFrame(loop);
     };
