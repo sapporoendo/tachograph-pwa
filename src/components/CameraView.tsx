@@ -392,7 +392,11 @@ export default function CameraView() {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: {
+          facingMode: "environment",
+          width: { ideal: 3840 },
+          height: { ideal: 2160 },
+        },
         audio: false,
       });
       streamRef.current = stream;
