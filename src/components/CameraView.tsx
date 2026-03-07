@@ -350,6 +350,7 @@ export default function CameraView() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [calibrationData, setCalibrationData] = useState<object | null>(null);
   const [distResult, setDistResult] = useState<DistanceResult>({
     status: "unknown", ratio: 0, message: "カメラを向けてください",
   });
@@ -424,17 +425,47 @@ export default function CameraView() {
     const canvas = captureCanvasRef.current;
     if (!video || !canvas) return;
     stopAnalysisLoop();
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    const videoW = video.videoWidth || 1280;
+    const videoH = video.videoHeight || 720;
+    canvas.width = videoW;
+    canvas.height = videoH;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
+    const videoScale = Math.max(screenW / videoW, screenH / videoH);
+    const displaySize = Math.min(0.85 * screenW, 340);
+    const guideScreenRadius = (145 / 300) * displaySize;
+    const outerRadiusPx = Math.round(guideScreenRadius / videoScale);
+    const calibration = {
+      center_x: Math.round(videoW / 2),
+      center_y: Math.round(videoH / 2),
+      outer_radius: outerRadiusPx,
+      image_width: videoW,
+      image_height: videoH,
+      captured_at: new Date().toISOString(),
+    };
+    setCalibrationData(calibration);
     setCapturedImage(dataUrl);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     setState("captured");
     setSaved(false);
   }, [stopAnalysisLoop]);
+
+  const downloadCalibration = useCallback(() => {
+    if (!calibrationData) return;
+    const blob = new Blob([JSON.stringify(calibrationData, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "calibration.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [calibrationData]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
@@ -473,6 +504,14 @@ export default function CameraView() {
     return (
       <div style={{ position: "fixed", inset: 0, background: "#0f172a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px", padding: "16px" }}>
         <img src={capturedImage} alt="撮影画像" style={{ width: "100%", maxWidth: "400px", borderRadius: "12px" }} />
+        {calibrationData && (
+          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "12px 16px", maxWidth: "400px", width: "100%", fontFamily: "monospace" }}>
+            <p style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "6px" }}>calibration.json</p>
+            <pre style={{ color: "#86efac", fontSize: "12px", margin: 0, whiteSpace: "pre-wrap" }}>
+              {JSON.stringify(calibrationData, null, 2)}
+            </pre>
+          </div>
+        )}
         {saved && (
           <div style={{ background: "#1e293b", borderRadius: "12px", padding: "16px", maxWidth: "400px", width: "100%" }}>
             <p style={{ color: "#86efac", fontSize: "14px", textAlign: "center", marginBottom: "8px" }}>
@@ -491,6 +530,9 @@ export default function CameraView() {
             📷 写真に保存
           </button>
         </div>
+        <button onClick={downloadCalibration} style={{ width: "100%", maxWidth: "400px", padding: "14px", background: "#1d4ed8", color: "white", borderRadius: "12px", border: "none", fontSize: "15px", fontWeight: "bold" }}>
+          ⬇️ calibration.json をダウンロード
+        </button>
       </div>
     );
   }
