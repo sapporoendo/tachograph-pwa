@@ -72,7 +72,7 @@ function analyzeFrame(
   if (outerRatio > 0.25) {
     status = "too_close";
     message = "もう少し離して！";
-  } else if (innerRatio >= 0.38 && innerRatio <= 0.62) {
+  } else if (innerRatio >= 0.28 && innerRatio <= 0.62) {
     status = "ok";
     message = "ちょうどいい！撮影できます";
   } else if (innerRatio < 0.38) {
