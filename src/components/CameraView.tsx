@@ -447,25 +447,14 @@ export default function CameraView() {
       image_height: videoH,
       captured_at: new Date().toISOString(),
     };
-    setCalibrationData(calibration);
+    // ファイル名にキャリブレーション情報を埋め込む
+    const filename = `tacho_cx${calibration.center_x}_cy${calibration.center_y}_r${calibration.outer_radius}.jpg`;
+    setCalibrationData({ ...calibration, filename });
     setCapturedImage(dataUrl);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     setState("captured");
     setSaved(false);
   }, [stopAnalysisLoop]);
-
-  const downloadCalibration = useCallback(() => {
-    if (!calibrationData) return;
-    const blob = new Blob([JSON.stringify(calibrationData, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "calibration.json";
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [calibrationData]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
@@ -526,13 +515,16 @@ export default function CameraView() {
           <button onClick={retake} style={{ flex: 1, padding: "14px", background: "#334155", color: "white", borderRadius: "12px", border: "none", fontSize: "16px" }}>
             撮り直し
           </button>
-          <button onClick={() => setSaved(true)} style={{ flex: 1, padding: "14px", background: "#16a34a", color: "white", borderRadius: "12px", border: "none", fontSize: "16px" }}>
-            📷 写真に保存
+          <button onClick={() => {
+            const a = document.createElement("a");
+            a.href = capturedImage;
+            a.download = (calibrationData as any)?.filename ?? "tacho.jpg";
+            a.click();
+            setSaved(true);
+          }} style={{ flex: 1, padding: "14px", background: "#16a34a", color: "white", borderRadius: "12px", border: "none", fontSize: "16px" }}>
+            📥 画像を保存
           </button>
         </div>
-        <button onClick={downloadCalibration} style={{ width: "100%", maxWidth: "400px", padding: "14px", background: "#1d4ed8", color: "white", borderRadius: "12px", border: "none", fontSize: "15px", fontWeight: "bold" }}>
-          ⬇️ calibration.json をダウンロード
-        </button>
       </div>
     );
   }
