@@ -27,48 +27,63 @@ function analyzeFrame(
   const cx = W / 2;
   const cy = H / 2;
   const guideR = (145 / 300) * W;
+  const outerR = guideR * 1.18;
 
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
 
-  let totalPixels = 0;
-  let whitePixels = 0;
+  let innerTotal = 0;
+  let innerWhite = 0;
+  let outerTotal = 0;
+  let outerWhite = 0;
+
+  const guideR2 = guideR * guideR;
+  const outerR2 = outerR * outerR;
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const dx = x - cx;
       const dy = y - cy;
-      if (dx * dx + dy * dy > guideR * guideR) continue;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > outerR2) continue;
 
-      totalPixels++;
       const idx = (y * W + x) * 4;
       const r = data[idx];
       const g = data[idx + 1];
       const b = data[idx + 2];
+      const isWhite = r > 180 && g > 180 && b > 180;
 
-      if (r > 180 && g > 180 && b > 180) {
-        whitePixels++;
+      if (d2 <= guideR2) {
+        innerTotal++;
+        if (isWhite) innerWhite++;
+      } else {
+        outerTotal++;
+        if (isWhite) outerWhite++;
       }
     }
   }
 
-  const ratio = totalPixels > 0 ? whitePixels / totalPixels : 0;
+  const innerRatio = innerTotal > 0 ? innerWhite / innerTotal : 0;
+  const outerRatio = outerTotal > 0 ? outerWhite / outerTotal : 0;
 
   let status: DistanceStatus;
   let message: string;
 
-  if (ratio > 0.55) {
+  if (outerRatio > 0.25) {
     status = "too_close";
     message = "もう少し離して！";
-  } else if (ratio >= 0.35) {
+  } else if (innerRatio >= 0.38 && innerRatio <= 0.62) {
     status = "ok";
     message = "ちょうどいい！撮影できます";
-  } else {
+  } else if (innerRatio < 0.38) {
     status = "too_far";
     message = "もう少し近づけて！";
+  } else {
+    status = "too_close";
+    message = "もう少し離して！";
   }
 
-  return { status, ratio, message };
+  return { status, ratio: innerRatio, message };
 }
 
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
@@ -371,7 +386,7 @@ export default function CameraView() {
         // ヒステリシス：一度OKになったら緩い条件(30%〜58%)で維持→チラつき防止
         const prev = prevStatusRef.current;
         let finalResult = result;
-        if (prev === "ok" && result.ratio >= 0.30 && result.ratio <= 0.58) {
+        if (prev === "ok" && result.ratio >= 0.35 && result.ratio <= 0.60) {
           finalResult = { status: "ok", ratio: result.ratio, message: "ちょうどいい！撮影できます" };
         }
         prevStatusRef.current = finalResult.status;
