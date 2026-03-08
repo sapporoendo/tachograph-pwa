@@ -27,63 +27,51 @@ function analyzeFrame(
   const cx = W / 2;
   const cy = H / 2;
   const guideR = (145 / 300) * W;
-  const outerR = guideR * 1.18;
 
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
 
-  let innerTotal = 0;
-  let innerWhite = 0;
-  let outerTotal = 0;
-  let outerWhite = 0;
+  let totalPixels = 0;
+  let whitePixels = 0;
 
   const guideR2 = guideR * guideR;
-  const outerR2 = outerR * outerR;
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const dx = x - cx;
       const dy = y - cy;
       const d2 = dx * dx + dy * dy;
-      if (d2 > outerR2) continue;
+      if (d2 > guideR2) continue;
 
       const idx = (y * W + x) * 4;
       const r = data[idx];
       const g = data[idx + 1];
       const b = data[idx + 2];
-      const isWhite = r > 180 && g > 180 && b > 180;
 
-      if (d2 <= guideR2) {
-        innerTotal++;
-        if (isWhite) innerWhite++;
-      } else {
-        outerTotal++;
-        if (isWhite) outerWhite++;
+      totalPixels++;
+      if (r > 180 && g > 180 && b > 180) {
+        whitePixels++;
       }
     }
   }
 
-  const innerRatio = innerTotal > 0 ? innerWhite / innerTotal : 0;
-  const outerRatio = outerTotal > 0 ? outerWhite / outerTotal : 0;
+  const ratio = totalPixels > 0 ? whitePixels / totalPixels : 0;
 
   let status: DistanceStatus;
   let message: string;
 
-  if (outerRatio > 0.25) {
+  if (ratio > 0.48) {
     status = "too_close";
     message = "もう少し離して！";
-  } else if (innerRatio >= 0.28 && innerRatio <= 0.62) {
+  } else if (ratio >= 0.28) {
     status = "ok";
     message = "ちょうどいい！撮影できます";
-  } else if (innerRatio < 0.38) {
+  } else {
     status = "too_far";
     message = "もう少し近づけて！";
-  } else {
-    status = "too_close";
-    message = "もう少し離して！";
   }
 
-  return { status, ratio: innerRatio, message };
+  return { status, ratio, message };
 }
 
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
