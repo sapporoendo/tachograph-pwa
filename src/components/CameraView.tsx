@@ -455,6 +455,19 @@ export default function CameraView() {
     setCalibrationData({ ...calibration, filename });
     setCapturedImage(dataUrl);
     streamRef.current?.getTracks().forEach((t) => t.stop());
+
+    const history = JSON.parse(localStorage.getItem("tachograph_history") || "[]");
+    history.unshift({
+      id: Date.now(),
+      filename: filename,
+      dataUrl: dataUrl,
+      calibration: calibration,
+      captured_at: calibration.captured_at,
+    });
+    // 最大20件保持
+    if (history.length > 20) history.splice(20);
+    localStorage.setItem("tachograph_history", JSON.stringify(history));
+
     setState("captured");
     setSaved(false);
   }, [stopAnalysisLoop]);
@@ -515,6 +528,15 @@ export default function CameraView() {
           </div>
         )}
         <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px" }}>
+          <button onClick={() => {
+            window.location.href = "/history";
+          }} style={{
+            flex: 1, padding: "14px",
+            background: "#1e40af", color: "white",
+            borderRadius: "12px", border: "none", fontSize: "14px"
+          }}>
+            📋 履歴
+          </button>
           <button onClick={retake} style={{ flex: 1, padding: "14px", background: "#334155", color: "white", borderRadius: "12px", border: "none", fontSize: "16px" }}>
             撮り直し
           </button>
