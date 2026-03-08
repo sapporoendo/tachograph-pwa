@@ -15,63 +15,29 @@ function analyzeFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement
 ): DistanceResult {
-  const W = 320;
-  const H = 320;
-  canvas.width = W;
-  canvas.height = H;
+  const W = 320, H = 320;
+  canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return { status: "unknown", ratio: 0, message: "" };
-
   ctx.drawImage(video, 0, 0, W, H);
-
-  const cx = W / 2;
-  const cy = H / 2;
+  const cx = W / 2, cy = H / 2;
   const guideR = (145 / 300) * W;
-
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
-
-  let totalPixels = 0;
-  let whitePixels = 0;
-
-  const guideR2 = guideR * guideR;
-
+  let total = 0, white = 0;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const dx = x - cx;
-      const dy = y - cy;
-      const d2 = dx * dx + dy * dy;
-      if (d2 > guideR2) continue;
-
-      const idx = (y * W + x) * 4;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-
-      totalPixels++;
-      if (r > 180 && g > 180 && b > 180) {
-        whitePixels++;
-      }
+      const dx = x - cx, dy = y - cy;
+      if (dx*dx + dy*dy > guideR*guideR) continue;
+      total++;
+      const i = (y*W+x)*4;
+      if (data[i]>180 && data[i+1]>180 && data[i+2]>180) white++;
     }
   }
-
-  const ratio = totalPixels > 0 ? whitePixels / totalPixels : 0;
-
-  let status: DistanceStatus;
-  let message: string;
-
-  if (ratio > 0.48) {
-    status = "too_close";
-    message = "もう少し離して！";
-  } else if (ratio >= 0.28) {
-    status = "ok";
-    message = "ちょうどいい！撮影できます";
-  } else {
-    status = "too_far";
-    message = "もう少し近づけて！";
-  }
-
-  return { status, ratio, message };
+  const ratio = total > 0 ? white / total : 0;
+  if (ratio > 0.55) return { status: "too_close", ratio, message: "もう少し離して！" };
+  if (ratio >= 0.35) return { status: "ok", ratio, message: "ちょうどいい！撮影できます" };
+  return { status: "too_far", ratio, message: "もう少し近づけて！" };
 }
 
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
@@ -374,7 +340,7 @@ export default function CameraView() {
         // ヒステリシス：一度OKになったら緩い条件(30%〜58%)で維持→チラつき防止
         const prev = prevStatusRef.current;
         let finalResult = result;
-        if (prev === "ok" && result.status !== "too_close" && result.ratio >= 0.35 && result.ratio <= 0.60) {
+        if (prev === "ok" && result.ratio >= 0.30 && result.ratio <= 0.58) {
           finalResult = { status: "ok", ratio: result.ratio, message: "ちょうどいい！撮影できます" };
         }
         prevStatusRef.current = finalResult.status;
@@ -413,10 +379,9 @@ export default function CameraView() {
 
   useEffect(() => {
     if (state === "preview" && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().then(() => {
-        startAnalysisLoop();
-      }).catch(console.error);
+      const v = videoRef.current;
+      v.srcObject = streamRef.current;
+      v.onloadedmetadata = () => { v.play().then(() => startAnalysisLoop()); };
     }
     return () => {
       if (state !== "preview") stopAnalysisLoop();
