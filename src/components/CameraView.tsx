@@ -26,43 +26,58 @@ function analyzeFrame(
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
 
-  let innerTotal = 0, innerWhite = 0;
-  let redRingTotal = 0, redRingCount = 0;
+  // 各radial fractionごとに赤ピクセル数を集計（0.4〜1.0を100分割）
+  const BINS = 60;
+  const BIN_MIN = 0.4;
+  const BIN_MAX = 1.0;
+  const redCounts = new Array(BINS).fill(0);
+  const binTotals = new Array(BINS).fill(0);
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const dx = x - cx, dy = y - cy;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > guideR) continue;
+      const frac = dist / guideR;
+      if (frac < BIN_MIN || frac > BIN_MAX) continue;
+
+      const binIdx = Math.floor((frac - BIN_MIN) / (BIN_MAX - BIN_MIN) * BINS);
+      if (binIdx < 0 || binIdx >= BINS) continue;
 
       const i = (y * W + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2];
-
-      // 内側全体：白率（距離判定用）
-      innerTotal++;
-      if (r > 180 && g > 180 && b > 180) innerWhite++;
-
-      // 赤リング検出ゾーン：外周半径の78〜95%のリング内
-      const frac = dist / guideR;
-      if (frac >= 0.78 && frac <= 0.95) {
-        redRingTotal++;
-        if (r > 150 && g < 100 && b < 100) redRingCount++;
-      }
+      binTotals[binIdx]++;
+      if (r > 140 && g < 110 && b < 110) redCounts[binIdx]++;
     }
   }
 
-  const ratio = innerTotal > 0 ? innerWhite / innerTotal : 0;
-  const redRatio = redRingTotal > 0 ? redRingCount / redRingTotal : 0;
-
-  // チャート紙が検出できない場合
-  if (redRatio < 0.03) {
-    return { status: "unknown", ratio, message: "チャート紙を枠に合わせてください" };
+  // 赤率が最も高いbinを探す
+  let maxRedRatio = 0;
+  let maxBinIdx = -1;
+  for (let i = 0; i < BINS; i++) {
+    if (binTotals[i] < 10) continue;
+    const rr = redCounts[i] / binTotals[i];
+    if (rr > maxRedRatio) {
+      maxRedRatio = rr;
+      maxBinIdx = i;
+    }
   }
 
-  // チャートあり：距離判定
-  if (ratio > 0.55) return { status: "too_close", ratio, message: "もう少し離して！" };
-  if (ratio >= 0.25) return { status: "ok", ratio, message: "ちょうどいい！撮影できます" };
-  return { status: "too_far", ratio, message: "もう少し近づけて！" };
+  // チャート未検出
+  if (maxRedRatio < 0.02 || maxBinIdx < 0) {
+    return { status: "unknown", ratio: 0, message: "チャート紙を枠に合わせてください" };
+  }
+
+  // 赤リングの見かけ位置（ガイド円に対する割合）
+  const redRingFrac = BIN_MIN + (maxBinIdx + 0.5) / BINS * (BIN_MAX - BIN_MIN);
+
+  // 距離判定：赤リングが0.82〜0.92に来るのがちょうどいい
+  if (redRingFrac > 0.92) {
+    return { status: "too_close", ratio: redRingFrac, message: "もう少し離して！" };
+  }
+  if (redRingFrac >= 0.72) {
+    return { status: "ok", ratio: redRingFrac, message: "ちょうどいい！撮影できます" };
+  }
+  return { status: "too_far", ratio: redRingFrac, message: "もう少し近づけて！" };
 }
 
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
@@ -598,7 +613,7 @@ export default function CameraView() {
         </div>
 
         <div style={{ marginTop: "8px", color: "rgba(255,255,255,0.4)", fontSize: "11px" }}>
-          白色率: {(distResult.ratio * 100).toFixed(1)}%
+          赤リング位置: {(distResult.ratio * 100).toFixed(1)}%
         </div>
       </div>
 
