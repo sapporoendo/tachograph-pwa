@@ -536,25 +536,24 @@ export default function CameraView() {
             </pre>
           </div>
         )}
-        {saved && (
-          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "16px", maxWidth: "400px", width: "100%", flexShrink: 0 }}>
-            <p style={{ color: "#86efac", fontSize: "14px", textAlign: "center", marginBottom: "8px" }}>
-              📌 上の写真を長押し → 「写真に保存」
-            </p>
-            <p style={{ color: "#94a3b8", fontSize: "12px", textAlign: "center" }}>
-              iOSの制限のため長押し保存が必要です
-            </p>
-          </div>
-        )}
         <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
           <button onClick={retake} style={{
             flex: 1, padding: "14px", background: "#334155", color: "white",
             borderRadius: "12px", border: "none", fontSize: "16px"
           }}>撮り直し</button>
-          <button onClick={() => setSaved(true)} style={{
+          <button onClick={async () => {
+            const filename = (calibrationData as any) 
+              ? `tacho_cx${(calibrationData as any).center_x}_cy${(calibrationData as any).center_y}_r${(calibrationData as any).outer_radius}.jpg` 
+              : "tacho.jpg";
+            const res = await fetch(capturedImage!);
+            const blob = await res.blob();
+            const file = new File([blob], filename, { type: "image/jpeg" });
+            await navigator.share({ files: [file], title: filename });
+            setSaved(true);
+          }} style={{
             flex: 1, padding: "14px", background: "#16a34a", color: "white",
             borderRadius: "12px", border: "none", fontSize: "16px"
-          }}>� 写真に保存</button>
+          }}>📷 写真に保存</button>
         </div>
       </div>
     );
