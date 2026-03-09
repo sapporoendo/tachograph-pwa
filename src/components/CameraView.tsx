@@ -434,6 +434,8 @@ export default function CameraView() {
     const canvas = captureCanvasRef.current;
     if (!video || !canvas) return;
     stopAnalysisLoop();
+    // iOSでは描画前に1フレーム待つ必要がある
+    setTimeout(() => {
     const videoW = video.videoWidth || 1280;
     const videoH = video.videoHeight || 720;
     canvas.width = videoW;
@@ -475,6 +477,7 @@ export default function CameraView() {
     localStorage.setItem("tachograph_history", JSON.stringify(history));
 
     setState("captured");
+    }, 100);
     setSaved(false);
   }, [stopAnalysisLoop]);
 
