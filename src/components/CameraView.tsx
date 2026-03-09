@@ -471,7 +471,6 @@ export default function CameraView() {
       history.unshift({
         id: Date.now(),
         filename,
-        dataUrl: url,
         calibration,
         captured_at: calibration.captured_at,
       });
