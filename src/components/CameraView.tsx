@@ -410,13 +410,6 @@ export default function CameraView() {
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute("playsinline", "true");
-        videoRef.current.setAttribute("autoplay", "true");
-        videoRef.current.setAttribute("muted", "true");
-        await videoRef.current.play();
-      }
       setState("preview");
     } catch (err) {
       console.error(err);
@@ -427,17 +420,16 @@ export default function CameraView() {
   useEffect(() => {
     if (state === "preview" && videoRef.current && streamRef.current) {
       const v = videoRef.current;
-      if (!v.srcObject) {
-        v.srcObject = streamRef.current;
-      }
-      const onReady = () => startAnalysisLoop();
-      v.addEventListener("playing", onReady, { once: true });
-      v.play().catch(console.error);
-      return () => {
-        v.removeEventListener("playing", onReady);
-        if (state !== "preview") stopAnalysisLoop();
+      v.srcObject = streamRef.current;
+      v.onloadedmetadata = () => {
+        v.play()
+          .then(() => startAnalysisLoop())
+          .catch(console.error);
       };
     }
+    return () => {
+      if (state !== "preview") stopAnalysisLoop();
+    };
   }, [state, startAnalysisLoop, stopAnalysisLoop]);
 
   const doCapture = useCallback(() => {
