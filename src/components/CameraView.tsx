@@ -20,23 +20,48 @@ function analyzeFrame(
   const ctx = canvas.getContext("2d");
   if (!ctx) return { status: "unknown", ratio: 0, message: "" };
   ctx.drawImage(video, 0, 0, W, H);
+
   const cx = W / 2, cy = H / 2;
   const guideR = (145 / 300) * W;
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
-  let total = 0, white = 0;
+
+  let innerTotal = 0, innerWhite = 0;
+  let redRingTotal = 0, redRingCount = 0;
+
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const dx = x - cx, dy = y - cy;
-      if (dx*dx + dy*dy > guideR*guideR) continue;
-      total++;
-      const i = (y*W+x)*4;
-      if (data[i]>180 && data[i+1]>180 && data[i+2]>180) white++;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > guideR) continue;
+
+      const i = (y * W + x) * 4;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+
+      // 内側全体：白率（距離判定用）
+      innerTotal++;
+      if (r > 180 && g > 180 && b > 180) innerWhite++;
+
+      // 赤リング検出ゾーン：外周半径の78〜95%のリング内
+      const frac = dist / guideR;
+      if (frac >= 0.78 && frac <= 0.95) {
+        redRingTotal++;
+        if (r > 150 && g < 100 && b < 100) redRingCount++;
+      }
     }
   }
-  const ratio = total > 0 ? white / total : 0;
+
+  const ratio = innerTotal > 0 ? innerWhite / innerTotal : 0;
+  const redRatio = redRingTotal > 0 ? redRingCount / redRingTotal : 0;
+
+  // チャート紙が検出できない場合
+  if (redRatio < 0.03) {
+    return { status: "unknown", ratio, message: "チャート紙を枠に合わせてください" };
+  }
+
+  // チャートあり：距離判定
   if (ratio > 0.55) return { status: "too_close", ratio, message: "もう少し離して！" };
-  if (ratio >= 0.35) return { status: "ok", ratio, message: "ちょうどいい！撮影できます" };
+  if (ratio >= 0.25) return { status: "ok", ratio, message: "ちょうどいい！撮影できます" };
   return { status: "too_far", ratio, message: "もう少し近づけて！" };
 }
 
