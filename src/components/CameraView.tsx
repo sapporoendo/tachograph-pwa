@@ -419,13 +419,10 @@ export default function CameraView() {
 
   useEffect(() => {
     if (state === "preview" && videoRef.current && streamRef.current) {
-      const v = videoRef.current;
-      v.srcObject = streamRef.current;
-      v.onloadedmetadata = () => {
-        v.play()
-          .then(() => startAnalysisLoop())
-          .catch(console.error);
-      };
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().then(() => {
+        startAnalysisLoop();
+      }).catch(console.error);
     }
     return () => {
       if (state !== "preview") stopAnalysisLoop();
