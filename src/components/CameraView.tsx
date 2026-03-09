@@ -431,25 +431,18 @@ export default function CameraView() {
 
   const doCapture = useCallback(() => {
     const video = videoRef.current;
-    const canvas = captureCanvasRef.current;
-    if (!video || !canvas) return;
+    if (!video) return;
     stopAnalysisLoop();
-    // iOSでは描画前に1フレーム待つ必要がある
-    setTimeout(() => {
+
     const videoW = video.videoWidth || 1280;
     const videoH = video.videoHeight || 720;
-    canvas.width = videoW;
-    canvas.height = videoH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
     const videoScale = Math.max(screenW / videoW, screenH / videoH);
     const displaySize = Math.min(0.85 * screenW, 340);
     const guideScreenRadius = (145 / 300) * displaySize;
     const outerRadiusPx = Math.round(guideScreenRadius / videoScale);
+
     const calibration = {
       center_x: Math.round(videoW / 2),
       center_y: Math.round(videoH / 2),
@@ -458,27 +451,37 @@ export default function CameraView() {
       image_height: videoH,
       captured_at: new Date().toISOString(),
     };
-    // ファイル名にキャリブレーション情報を埋め込む
     const filename = `tacho_cx${calibration.center_x}_cy${calibration.center_y}_r${calibration.outer_radius}.jpg`;
-    setCalibrationData({ ...calibration, filename });
-    setCapturedImage(dataUrl);
-    streamRef.current?.getTracks().forEach((t) => t.stop());
 
-    const history = JSON.parse(localStorage.getItem("tachograph_history") || "[]");
-    history.unshift({
-      id: Date.now(),
-      filename: filename,
-      dataUrl: dataUrl,
-      calibration: calibration,
-      captured_at: calibration.captured_at,
-    });
-    // 最大20件保持
-    if (history.length > 20) history.splice(20);
-    localStorage.setItem("tachograph_history", JSON.stringify(history));
+    // canvasで撮影
+    const canvas = document.createElement("canvas");
+    canvas.width = videoW;
+    canvas.height = videoH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0);
 
-    setState("captured");
-    }, 100);
-    setSaved(false);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      setCapturedImage(url);
+      setCalibrationData({ ...calibration, filename });
+
+      const history = JSON.parse(localStorage.getItem("tachograph_history") || "[]");
+      history.unshift({
+        id: Date.now(),
+        filename,
+        dataUrl: url,
+        calibration,
+        captured_at: calibration.captured_at,
+      });
+      if (history.length > 20) history.splice(20);
+      localStorage.setItem("tachograph_history", JSON.stringify(history));
+
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      setState("captured");
+      setSaved(false);
+    }, "image/jpeg", 0.95);
   }, [stopAnalysisLoop]);
 
   const retake = useCallback(() => {
