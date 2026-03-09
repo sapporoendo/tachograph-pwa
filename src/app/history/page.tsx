@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 interface HistoryItem {
   id: number;
   filename: string;
-  dataUrl: string;
   calibration: {
     center_x: number;
     center_y: number;
@@ -79,11 +78,13 @@ export default function HistoryPage() {
               alignItems: "flex-start",
             }}
           >
-            <img
-              src={item.dataUrl}
-              alt="撮影画像"
-              style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 10, flexShrink: 0 }}
-            />
+            <div style={{
+              width: 80, height: 80, borderRadius: 10, flexShrink: 0,
+              background: "#0f172a", display: "flex", alignItems: "center",
+              justifyContent: "center", fontSize: 28
+            }}>
+              📋
+            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
                 {new Date(item.captured_at).toLocaleString("ja-JP")}

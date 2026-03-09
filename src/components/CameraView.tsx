@@ -71,10 +71,10 @@ function analyzeFrame(
   const redRingFrac = BIN_MIN + (maxBinIdx + 0.5) / BINS * (BIN_MAX - BIN_MIN);
 
   // 距離判定：赤リングが0.82〜0.92に来るのがちょうどいい
-  if (redRingFrac > 0.92) {
+  if (redRingFrac > 0.95) {
     return { status: "too_close", ratio: redRingFrac, message: "もう少し離して！" };
   }
-  if (redRingFrac >= 0.72) {
+  if (redRingFrac >= 0.65) {
     return { status: "ok", ratio: redRingFrac, message: "ちょうどいい！撮影できます" };
   }
   return { status: "too_far", ratio: redRingFrac, message: "もう少し近づけて！" };
@@ -536,25 +536,25 @@ export default function CameraView() {
             </pre>
           </div>
         )}
+        {saved && (
+          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "16px", maxWidth: "400px", width: "100%", flexShrink: 0 }}>
+            <p style={{ color: "#86efac", fontSize: "14px", textAlign: "center", marginBottom: "8px" }}>
+              📌 上の写真を長押し → 「写真に保存」
+            </p>
+            <p style={{ color: "#94a3b8", fontSize: "12px", textAlign: "center" }}>
+              iOSの制限のため長押し保存が必要です
+            </p>
+          </div>
+        )}
         <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
-          <button onClick={() => { window.location.href = "/history"; }} style={{
-            flex: 1, padding: "14px", background: "#1e40af", color: "white",
-            borderRadius: "12px", border: "none", fontSize: "14px"
-          }}>📋 履歴</button>
           <button onClick={retake} style={{
             flex: 1, padding: "14px", background: "#334155", color: "white",
             borderRadius: "12px", border: "none", fontSize: "16px"
           }}>撮り直し</button>
-          <button onClick={() => {
-            const a = document.createElement("a");
-            a.href = capturedImage;
-            a.download = (calibrationData as any)?.filename ?? "tacho.jpg";
-            a.click();
-            setSaved(true);
-          }} style={{
+          <button onClick={() => setSaved(true)} style={{
             flex: 1, padding: "14px", background: "#16a34a", color: "white",
             borderRadius: "12px", border: "none", fontSize: "16px"
-          }}>📥 保存</button>
+          }}>� 写真に保存</button>
         </div>
       </div>
     );
