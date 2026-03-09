@@ -518,48 +518,43 @@ export default function CameraView() {
 
   if (state === "captured" && capturedImage) {
     return (
-      <div style={{ position: "fixed", inset: 0, background: "#0f172a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px", padding: "16px" }}>
-        <img src={capturedImage} alt="撮影画像" style={{ width: "100%", maxWidth: "400px", borderRadius: "12px" }} />
+      <div style={{
+        position: "fixed", inset: 0, background: "#0f172a",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", overflowY: "scroll",
+        WebkitOverflowScrolling: "touch",
+        padding: "16px 16px 48px", gap: "16px",
+      }}>
+        <img src={capturedImage} alt="撮影画像"
+          style={{ width: "100%", maxWidth: "400px", borderRadius: "12px", flexShrink: 0 }} />
         {calibrationData && (
-          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "12px 16px", maxWidth: "400px", width: "100%", fontFamily: "monospace" }}>
+          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "12px 16px",
+            maxWidth: "400px", width: "100%", fontFamily: "monospace", flexShrink: 0 }}>
             <p style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "6px" }}>calibration.json</p>
             <pre style={{ color: "#86efac", fontSize: "12px", margin: 0, whiteSpace: "pre-wrap" }}>
               {JSON.stringify(calibrationData, null, 2)}
             </pre>
           </div>
         )}
-        {saved && (
-          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "16px", maxWidth: "400px", width: "100%" }}>
-            <p style={{ color: "#86efac", fontSize: "14px", textAlign: "center", marginBottom: "8px" }}>
-              📌 上の写真を長押し → 「写真に保存」
-            </p>
-            <p style={{ color: "#94a3b8", fontSize: "12px", textAlign: "center" }}>
-              iOSの制限のため長押し保存が必要です
-            </p>
-          </div>
-        )}
-        <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px" }}>
-          <button onClick={() => {
-            window.location.href = "/history";
-          }} style={{
-            flex: 1, padding: "14px",
-            background: "#1e40af", color: "white",
+        <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
+          <button onClick={() => { window.location.href = "/history"; }} style={{
+            flex: 1, padding: "14px", background: "#1e40af", color: "white",
             borderRadius: "12px", border: "none", fontSize: "14px"
-          }}>
-            📋 履歴
-          </button>
-          <button onClick={retake} style={{ flex: 1, padding: "14px", background: "#334155", color: "white", borderRadius: "12px", border: "none", fontSize: "16px" }}>
-            撮り直し
-          </button>
+          }}>📋 履歴</button>
+          <button onClick={retake} style={{
+            flex: 1, padding: "14px", background: "#334155", color: "white",
+            borderRadius: "12px", border: "none", fontSize: "16px"
+          }}>撮り直し</button>
           <button onClick={() => {
             const a = document.createElement("a");
             a.href = capturedImage;
             a.download = (calibrationData as any)?.filename ?? "tacho.jpg";
             a.click();
             setSaved(true);
-          }} style={{ flex: 1, padding: "14px", background: "#16a34a", color: "white", borderRadius: "12px", border: "none", fontSize: "16px" }}>
-            📥 画像を保存
-          </button>
+          }} style={{
+            flex: 1, padding: "14px", background: "#16a34a", color: "white",
+            borderRadius: "12px", border: "none", fontSize: "16px"
+          }}>📥 保存</button>
         </div>
       </div>
     );
