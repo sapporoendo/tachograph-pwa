@@ -26,7 +26,6 @@ function analyzeFrame(
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
 
-  // 各radial fractionごとに赤ピクセル数を集計（0.4〜1.0を100分割）
   const BINS = 60;
   const BIN_MIN = 0.4;
   const BIN_MAX = 1.0;
@@ -46,11 +45,21 @@ function analyzeFrame(
       const i = (y * W + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       binTotals[binIdx]++;
-      if (r > 140 && g < 110 && b < 110) redCounts[binIdx]++;
+
+      const maxCh = Math.max(r, g, b);
+      const minCh = Math.min(r, g, b);
+      if (
+        r === maxCh &&
+        r > 100 &&
+        r - g > 30 &&
+        r - b > 30 &&
+        (maxCh - minCh) > 40
+      ) {
+        redCounts[binIdx]++;
+      }
     }
   }
 
-  // 赤率が最も高いbinを探す
   let maxRedRatio = 0;
   let maxBinIdx = -1;
   for (let i = 0; i < BINS; i++) {
@@ -62,15 +71,12 @@ function analyzeFrame(
     }
   }
 
-  // チャート未検出
-  if (maxRedRatio < 0.02 || maxBinIdx < 0) {
+  if (maxRedRatio < 0.008 || maxBinIdx < 0) {
     return { status: "unknown", ratio: 0, message: "チャート紙を枠に合わせてください" };
   }
 
-  // 赤リングの見かけ位置（ガイド円に対する割合）
   const redRingFrac = BIN_MIN + (maxBinIdx + 0.5) / BINS * (BIN_MAX - BIN_MIN);
 
-  // 距離判定：赤リングが0.82〜0.92に来るのがちょうどいい
   if (redRingFrac > 0.95) {
     return { status: "too_close", ratio: redRingFrac, message: "もう少し離して！" };
   }
@@ -380,7 +386,7 @@ export default function CameraView() {
         // ヒステリシス：一度OKになったら緩い条件(30%〜58%)で維持→チラつき防止
         const prev = prevStatusRef.current;
         let finalResult = result;
-        if (prev === "ok" && result.ratio >= 0.30 && result.ratio <= 0.58) {
+        if (prev === "ok" && result.ratio >= 0.55 && result.ratio <= 0.98) {
           finalResult = { status: "ok", ratio: result.ratio, message: "ちょうどいい！撮影できます" };
         }
         prevStatusRef.current = finalResult.status;
