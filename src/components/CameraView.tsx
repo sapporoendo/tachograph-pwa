@@ -77,10 +77,7 @@ function analyzeFrame(
 
   const redRingFrac = BIN_MIN + (maxBinIdx + 0.5) / BINS * (BIN_MAX - BIN_MIN);
 
-  if (redRingFrac > 0.95) {
-    return { status: "too_close", ratio: redRingFrac, message: "もう少し離して！" };
-  }
-  if (redRingFrac >= 0.65) {
+  if (redRingFrac >= 0.55) {
     return { status: "ok", ratio: redRingFrac, message: "ちょうどいい！撮影できます" };
   }
   return { status: "too_far", ratio: redRingFrac, message: "もう少し近づけて！" };
