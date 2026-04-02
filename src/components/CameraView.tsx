@@ -539,6 +539,20 @@ export default function CameraView() {
             </pre>
           </div>
         )}
+        {saved && (
+          <div style={{
+            background: "#166534", borderRadius: "12px", padding: "14px 16px",
+            maxWidth: "400px", width: "100%", flexShrink: 0,
+            textAlign: "center",
+          }}>
+            <p style={{ color: "#86efac", fontSize: "16px", fontWeight: "bold", margin: 0 }}>
+              ✅ 保存できました！
+            </p>
+            <p style={{ color: "#4ade80", fontSize: "12px", margin: "4px 0 0" }}>
+              写真アプリに保存されています
+            </p>
+          </div>
+        )}
         <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
           <button onClick={retake} style={{
             flex: 1, padding: "14px", background: "#334155", color: "white",
@@ -548,6 +562,7 @@ export default function CameraView() {
             const filename = (calibrationData as any) 
               ? `tacho_cx${(calibrationData as any).center_x}_cy${(calibrationData as any).center_y}_r${(calibrationData as any).outer_radius}.jpg` 
               : "tacho.jpg";
+            setSaved(false);
             const res = await fetch(capturedImage!);
             const blob = await res.blob();
             const file = new File([blob], filename, { type: "image/jpeg" });
