@@ -562,7 +562,6 @@ export default function CameraView() {
             const filename = (calibrationData as any) 
               ? `tacho_cx${(calibrationData as any).center_x}_cy${(calibrationData as any).center_y}_r${(calibrationData as any).outer_radius}.jpg` 
               : "tacho.jpg";
-            setSaved(false);
             const res = await fetch(capturedImage!);
             const blob = await res.blob();
             const file = new File([blob], filename, { type: "image/jpeg" });
