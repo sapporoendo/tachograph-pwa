@@ -49,8 +49,8 @@ const CAPTURE_DISABLE_FRAMES = 8;
 const DETECTION_SMOOTHING = 0.35;
 const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
-const GUIDE_DISPLAY_RATIO = 0.74;
-const GUIDE_MAX_SIZE = 300;
+const GUIDE_DISPLAY_RATIO = 0.85;
+const GUIDE_MAX_SIZE = 340;
 
 const initialDetection: DetectionState = {
   centerX: null,
