@@ -22,12 +22,21 @@ interface DetectionState extends TachographDetectionResult {
 }
 
 interface CalibrationData {
+  cx: number | null;
+  cy: number | null;
+  r: number;
   center_x: number | null;
   center_y: number | null;
   outer_ratio: number;
   outer_radius: number;
   image_width: number;
   image_height: number;
+  coordinate_system: "saved_jpeg_pixels";
+  analysis_canvas_width: number;
+  analysis_canvas_height: number;
+  raw_center_x: number | null;
+  raw_center_y: number | null;
+  raw_outer_radius: number;
   confidence: number;
   outer_warning: boolean;
   can_capture: boolean;
@@ -41,6 +50,16 @@ interface CalibrationData {
   detection: TachographDetectionResult;
   filename: string;
   json_filename: string;
+}
+
+interface AnalysisMapping {
+  sourceX: number;
+  sourceY: number;
+  sourceSize: number;
+  analysisWidth: number;
+  analysisHeight: number;
+  savedImageWidth: number;
+  savedImageHeight: number;
 }
 
 const ANALYSIS_SIZE = 320;
@@ -88,30 +107,42 @@ function formatTimestamp(date: Date): string {
   ].join("");
 }
 
-function createCaptureFilename(detection: TachographDetectionResult, date: Date): string {
-  const center =
-    detection.centerX !== null &&
-    detection.centerY !== null &&
-    detection.confidence >= MIN_CENTER_CONFIDENCE
-      ? `x${Math.round(detection.centerX)}_y${Math.round(detection.centerY)}`
-      : "unknown";
-
-  // confidence / outerRatio は calibration に保持し、現場で扱いやすいようファイル名は中心座標と日時に絞る。
-  return `takomiru_center_${center}_${formatTimestamp(date)}.jpg`;
+function createCaptureFilename(cx: number | null, cy: number | null, r: number): string {
+  const safeCx = cx === null ? "unknown" : Math.round(cx).toString();
+  const safeCy = cy === null ? "unknown" : Math.round(cy).toString();
+  return `tacho_cx${safeCx}_cy${safeCy}_r${Math.round(r)}.jpg`;
 }
 
-function scaleDetectionToImage(
-  detection: TachographDetectionResult,
-  imageWidth: number,
-  imageHeight: number
-): TachographDetectionResult {
-  if (detection.centerX === null || detection.centerY === null) return detection;
+function getAnalysisMapping(videoWidth: number, videoHeight: number): AnalysisMapping {
+  const sourceSize = Math.min(videoWidth, videoHeight);
+  return {
+    sourceX: (videoWidth - sourceSize) / 2,
+    sourceY: (videoHeight - sourceSize) / 2,
+    sourceSize,
+    analysisWidth: ANALYSIS_SIZE,
+    analysisHeight: ANALYSIS_SIZE,
+    savedImageWidth: videoWidth,
+    savedImageHeight: videoHeight,
+  };
+}
+
+function mapAnalysisPointToSavedJpeg(
+  x: number | null,
+  y: number | null,
+  mapping: AnalysisMapping
+) {
+  if (x === null || y === null) {
+    return { x: null, y: null };
+  }
 
   return {
-    ...detection,
-    centerX: detection.centerX / ANALYSIS_SIZE * imageWidth,
-    centerY: detection.centerY / ANALYSIS_SIZE * imageHeight,
+    x: mapping.sourceX + x / mapping.analysisWidth * mapping.sourceSize,
+    y: mapping.sourceY + y / mapping.analysisHeight * mapping.sourceSize,
   };
+}
+
+function mapAnalysisRadiusToSavedJpeg(radius: number, mapping: AnalysisMapping): number {
+  return radius / mapping.analysisWidth * mapping.sourceSize;
 }
 
 function blendDetection(
@@ -206,7 +237,18 @@ function analyzeFrame(
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) return initialDetection;
-  ctx.drawImage(video, 0, 0, W, H);
+  const mapping = getAnalysisMapping(video.videoWidth || W, video.videoHeight || H);
+  ctx.drawImage(
+    video,
+    mapping.sourceX,
+    mapping.sourceY,
+    mapping.sourceSize,
+    mapping.sourceSize,
+    0,
+    0,
+    W,
+    H
+  );
 
   const screenCx = W / 2, screenCy = H / 2;
   const guideR = (145 / 300) * W;
@@ -865,34 +907,46 @@ export default function CameraView() {
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
     const videoScale = Math.max(screenW / videoW, screenH / videoH);
+    const analysisMapping = getAnalysisMapping(videoW, videoH);
     const displaySize = Math.min(GUIDE_DISPLAY_RATIO * screenW, GUIDE_MAX_SIZE);
     const guideScreenRadius = (145 / 300) * displaySize;
     const outerRadiusPx = Math.round(guideScreenRadius / videoScale);
     const capturedAt = new Date();
-    const imageDetection = scaleDetectionToImage(detectionResult, videoW, videoH);
-    const filename = createCaptureFilename(imageDetection, capturedAt);
+    const mappedCenter = mapAnalysisPointToSavedJpeg(detectionResult.centerX, detectionResult.centerY, analysisMapping);
+    const rawOuterRadius = detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE);
+    const mappedOuterRadius = mapAnalysisRadiusToSavedJpeg(rawOuterRadius, analysisMapping);
+    const filename = createCaptureFilename(mappedCenter.x, mappedCenter.y, mappedOuterRadius);
     const jsonFilename = createJsonFilename(filename);
     const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
     const trackSettings = videoTrack?.getSettings();
 
     const calibration = {
-      center_x: imageDetection.centerX === null ? null : Math.round(imageDetection.centerX),
-      center_y: imageDetection.centerY === null ? null : Math.round(imageDetection.centerY),
-      outer_ratio: imageDetection.outerRatio,
-      outer_radius: outerRadiusPx,
+      cx: mappedCenter.x === null ? null : Math.round(mappedCenter.x),
+      cy: mappedCenter.y === null ? null : Math.round(mappedCenter.y),
+      r: Math.round(mappedOuterRadius),
+      center_x: mappedCenter.x === null ? null : Math.round(mappedCenter.x),
+      center_y: mappedCenter.y === null ? null : Math.round(mappedCenter.y),
+      outer_ratio: detectionResult.outerRatio,
+      outer_radius: Math.round(mappedOuterRadius),
       image_width: videoW,
       image_height: videoH,
-      confidence: imageDetection.confidence,
-      outer_warning: imageDetection.outerWarning,
-      can_capture: imageDetection.canCapture,
-      message: imageDetection.message,
+      coordinate_system: "saved_jpeg_pixels" as const,
+      analysis_canvas_width: analysisMapping.analysisWidth,
+      analysis_canvas_height: analysisMapping.analysisHeight,
+      raw_center_x: detectionResult.centerX === null ? null : Math.round(detectionResult.centerX),
+      raw_center_y: detectionResult.centerY === null ? null : Math.round(detectionResult.centerY),
+      raw_outer_radius: Math.round(rawOuterRadius),
+      confidence: detectionResult.confidence,
+      outer_warning: detectionResult.outerWarning,
+      can_capture: detectionResult.canCapture,
+      message: detectionResult.message,
       chart_diameter_cm: TACHOGRAPH_CHART_DIAMETER_CM,
       timestamp: capturedAt.toISOString(),
       user_agent: navigator.userAgent,
       selected_camera_label: videoTrack?.label || null,
       selected_camera_device_id: trackSettings?.deviceId || null,
       captured_at: capturedAt.toISOString(),
-      detection: imageDetection,
+      detection: detectionResult,
       filename,
       json_filename: jsonFilename,
     };
@@ -953,10 +1007,13 @@ export default function CameraView() {
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
   const previewVideoW = videoRef.current?.videoWidth || ANALYSIS_SIZE;
   const previewVideoH = videoRef.current?.videoHeight || ANALYSIS_SIZE;
-  const plannedFilename = createCaptureFilename(
-    scaleDetectionToImage(detectionResult, previewVideoW, previewVideoH),
-    new Date()
+  const previewMapping = getAnalysisMapping(previewVideoW, previewVideoH);
+  const previewCenter = mapAnalysisPointToSavedJpeg(detectionResult.centerX, detectionResult.centerY, previewMapping);
+  const previewOuterRadius = mapAnalysisRadiusToSavedJpeg(
+    detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE),
+    previewMapping
   );
+  const plannedFilename = createCaptureFilename(previewCenter.x, previewCenter.y, previewOuterRadius);
 
   if (state === "idle") {
     return (
@@ -1069,7 +1126,7 @@ export default function CameraView() {
             borderRadius: "12px", border: "none", fontSize: "16px"
           }}>撮り直し</button>
           <button onClick={async () => {
-            const filename = calibrationData?.filename ?? createCaptureFilename(initialDetection, new Date());
+            const filename = calibrationData?.filename ?? createCaptureFilename(null, null, 0);
             await saveJpeg(capturedImage, filename);
             setSaved(true);
           }} style={{
