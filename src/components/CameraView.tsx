@@ -36,11 +36,15 @@ const ANALYSIS_SIZE = 320;
 // タコグラフチャート紙の物理直径。UIでは実寸補正せず、後続の解析エンジンが参照しやすいメタ情報として保持する。
 const TACHOGRAPH_CHART_DIAMETER_CM = 12.2;
 const MIN_CENTER_CONFIDENCE = 0.35;
-const MIN_RED_PIXELS_FOR_CENTER = 120;
-const MIN_RED_RING_RATIO = 0.008;
 const CENTER_ALIGNMENT_TOLERANCE_RATIO = 0.075;
-const OUTER_RATIO_MIN = 0.55;
-const OUTER_RATIO_MAX = 1.02;
+const OUTER_RATIO_MIN = 0.72;
+const OUTER_RATIO_MAX = 1.0;
+const OUTER_RADIUS_MIN_RATIO = 0.35;
+const OUTER_RADIUS_MAX_RATIO = 0.48;
+const OUTER_EDGE_MIN_CONFIDENCE = 0.28;
+const CAPTURE_ENABLE_FRAMES = 6;
+const CAPTURE_DISABLE_FRAMES = 8;
+const DETECTION_SMOOTHING = 0.35;
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -93,6 +97,32 @@ function scaleDetectionToImage(
   };
 }
 
+function blendDetection(
+  previous: DetectionState | null,
+  current: DetectionState
+): DetectionState {
+  if (
+    !previous ||
+    previous.centerX === null ||
+    previous.centerY === null ||
+    current.centerX === null ||
+    current.centerY === null
+  ) {
+    return current;
+  }
+
+  const keep = 1 - DETECTION_SMOOTHING;
+  const smoothed: DetectionState = {
+    ...current,
+    centerX: previous.centerX * keep + current.centerX * DETECTION_SMOOTHING,
+    centerY: previous.centerY * keep + current.centerY * DETECTION_SMOOTHING,
+    confidence: previous.confidence * keep + current.confidence * DETECTION_SMOOTHING,
+    outerRatio: previous.outerRatio * keep + current.outerRatio * DETECTION_SMOOTHING,
+  };
+
+  return smoothed;
+}
+
 function analyzeFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement
@@ -107,114 +137,90 @@ function analyzeFrame(
   const guideR = (145 / 300) * W;
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
+  const sampleCount = 96;
+  const centerOffsets = [-20, -12, -6, 0, 6, 12, 20];
+  const radiusMin = Math.round(Math.min(W, H) * OUTER_RADIUS_MIN_RATIO);
+  const radiusMax = Math.round(Math.min(W, H) * OUTER_RADIUS_MAX_RATIO);
 
-  let redPixels = 0;
-  let redXSum = 0;
-  let redYSum = 0;
-  let minRedX = W;
-  let minRedY = H;
-  let maxRedX = 0;
-  let maxRedY = 0;
-
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4;
-      const r = data[i], g = data[i + 1], b = data[i + 2];
-      const maxCh = Math.max(r, g, b);
-      const minCh = Math.min(r, g, b);
-      const isRed =
-        r === maxCh &&
-        r > 95 &&
-        r - g > 25 &&
-        r - b > 25 &&
-        (maxCh - minCh) > 35;
-
-      if (!isRed) continue;
-
-      redPixels++;
-      redXSum += x;
-      redYSum += y;
-      minRedX = Math.min(minRedX, x);
-      minRedY = Math.min(minRedY, y);
-      maxRedX = Math.max(maxRedX, x);
-      maxRedY = Math.max(maxRedY, y);
-    }
-  }
-
-  if (redPixels < MIN_RED_PIXELS_FOR_CENTER) {
+  const getPixel = (x: number, y: number) => {
+    const px = Math.max(0, Math.min(W - 1, Math.round(x)));
+    const py = Math.max(0, Math.min(H - 1, Math.round(y)));
+    const i = (py * W + px) * 4;
+    const r = data[i], g = data[i + 1], b = data[i + 2];
     return {
-      ...initialDetection,
-      message: "中心を検出できません",
+      r,
+      g,
+      b,
+      luma: 0.299 * r + 0.587 * g + 0.114 * b,
     };
-  }
+  };
 
-  const centerX = redXSum / redPixels;
-  const centerY = redYSum / redPixels;
-  const redSpan = Math.max(maxRedX - minRedX, maxRedY - minRedY);
+  let best = {
+    centerX: screenCx,
+    centerY: screenCy,
+    radius: 0,
+    confidence: 0,
+    edgeRatio: 0,
+  };
 
-  const BINS = 60;
-  const BIN_MIN = 0.25;
-  const BIN_MAX = 1.15;
-  const redCounts = new Array(BINS).fill(0);
-  const binTotals = new Array(BINS).fill(0);
+  for (const ox of centerOffsets) {
+    for (const oy of centerOffsets) {
+      const candidateX = screenCx + ox;
+      const candidateY = screenCy + oy;
+      const centerPenalty = Math.sqrt(ox * ox + oy * oy) / (W * 0.18);
 
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const dx = x - centerX, dy = y - centerY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const frac = dist / guideR;
-      if (frac < BIN_MIN || frac > BIN_MAX) continue;
+      for (let radius = radiusMin; radius <= radiusMax; radius += 4) {
+        let edgeHits = 0;
+        let edgeStrength = 0;
 
-      const binIdx = Math.floor((frac - BIN_MIN) / (BIN_MAX - BIN_MIN) * BINS);
-      if (binIdx < 0 || binIdx >= BINS) continue;
+        for (let s = 0; s < sampleCount; s++) {
+          const angle = (Math.PI * 2 * s) / sampleCount;
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+          const inner = getPixel(candidateX + cos * (radius - 3), candidateY + sin * (radius - 3));
+          const outer = getPixel(candidateX + cos * (radius + 3), candidateY + sin * (radius + 3));
+          const edge = Math.abs(inner.luma - outer.luma);
+          const isDarkEdge = inner.luma < 150 || outer.luma < 150;
+          const isGreenEdge =
+            (inner.g > inner.r + 12 && inner.g > inner.b + 12) ||
+            (outer.g > outer.r + 12 && outer.g > outer.b + 12);
 
-      const i = (y * W + x) * 4;
-      const r = data[i], g = data[i + 1], b = data[i + 2];
-      binTotals[binIdx]++;
+          if (edge > 18 && (isDarkEdge || isGreenEdge)) {
+            edgeHits++;
+            edgeStrength += Math.min(edge / 80, 1);
+          }
+        }
 
-      const maxCh = Math.max(r, g, b);
-      const minCh = Math.min(r, g, b);
-      if (
-        r === maxCh &&
-        r > 100 &&
-        r - g > 30 &&
-        r - b > 30 &&
-        (maxCh - minCh) > 40
-      ) {
-        redCounts[binIdx]++;
+        const edgeRatio = edgeHits / sampleCount;
+        const radiusBonus = (radius - radiusMin) / Math.max(1, radiusMax - radiusMin) * 0.12;
+        const confidence = edgeRatio * 0.75 + (edgeStrength / sampleCount) * 0.25 + radiusBonus - centerPenalty * 0.18;
+
+        if (confidence > best.confidence) {
+          best = {
+            centerX: candidateX,
+            centerY: candidateY,
+            radius,
+            confidence: Math.max(0, Math.min(1, confidence)),
+            edgeRatio,
+          };
+        }
       }
     }
   }
 
-  let maxRedRatio = 0;
-  let maxBinIdx = -1;
-  for (let i = 0; i < BINS; i++) {
-    if (binTotals[i] < 10) continue;
-    const rr = redCounts[i] / binTotals[i];
-    if (rr > maxRedRatio) {
-      maxRedRatio = rr;
-      maxBinIdx = i;
-    }
-  }
-
-  if (maxRedRatio < MIN_RED_RING_RATIO || maxBinIdx < 0) {
+  if (best.confidence < OUTER_EDGE_MIN_CONFIDENCE || best.radius <= 0) {
     return {
       ...initialDetection,
-      centerX,
-      centerY,
-      confidence: 0.2,
+      confidence: best.confidence,
       message: "外周を円形ガイドに合わせてください",
     };
   }
 
-  const redRingFrac = BIN_MIN + (maxBinIdx + 0.5) / BINS * (BIN_MAX - BIN_MIN);
+  const centerX = best.centerX;
+  const centerY = best.centerY;
+  const redRingFrac = best.radius / guideR;
   const centerOffset = Math.sqrt((centerX - screenCx) ** 2 + (centerY - screenCy) ** 2);
-  const confidence = Math.min(
-    1,
-    (maxRedRatio / 0.03) * 0.55 +
-      Math.min(redPixels / 1800, 1) * 0.25 +
-      Math.min(redSpan / 220, 1) * 0.2
-  );
+  const confidence = best.confidence;
   const hasCenter = confidence >= MIN_CENTER_CONFIDENCE;
   const isAligned = hasCenter && centerOffset <= W * CENTER_ALIGNMENT_TOLERANCE_RATIO;
   const isDistanceOk = redRingFrac >= OUTER_RATIO_MIN && redRingFrac <= OUTER_RATIO_MAX;
@@ -279,7 +285,7 @@ async function saveJpeg(blobUrl: string, filename: string) {
   const res = await fetch(blobUrl);
   const blob = await res.blob();
   const file = new File([blob], filename, { type: "image/jpeg" });
-  const shareData: ShareData = { files: [file], title: filename };
+  const shareData: ShareData = { files: [file], title: filename, text: filename };
 
   if (navigator.canShare?.(shareData)) {
     await navigator.share(shareData);
@@ -568,7 +574,10 @@ export default function CameraView() {
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
-  const prevStatusRef = useRef<DistanceStatus>("unknown");
+  const smoothedDetectionRef = useRef<DetectionState | null>(null);
+  const stableCanCaptureRef = useRef(false);
+  const captureOkFramesRef = useRef(0);
+  const captureNgFramesRef = useRef(0);
 
   const [state, setState] = useState<CaptureState>("idle");
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -589,20 +598,48 @@ export default function CameraView() {
       const video = videoRef.current;
       const canvas = analysisCanvasRef.current;
       if (video && canvas && video.readyState >= 2) {
-        const result = analyzeFrame(video, canvas);
-        // ヒステリシス：一度OKになったら緩い条件(30%〜58%)で維持→チラつき防止
-        const prev = prevStatusRef.current;
-        let finalResult = result;
-        if (
-          prev === "ok" &&
-          result.confidence >= MIN_CENTER_CONFIDENCE &&
-          result.outerRatio >= OUTER_RATIO_MIN &&
-          result.outerRatio <= OUTER_RATIO_MAX &&
-          result.isAligned
-        ) {
-          finalResult = { ...result, status: "ok", canCapture: true, message: "撮影できます" };
+        const rawResult = analyzeFrame(video, canvas);
+        const smoothedResult = blendDetection(smoothedDetectionRef.current, rawResult);
+        const smoothedCenterOffset =
+          smoothedResult.centerX === null || smoothedResult.centerY === null
+            ? Infinity
+            : Math.sqrt((smoothedResult.centerX - ANALYSIS_SIZE / 2) ** 2 + (smoothedResult.centerY - ANALYSIS_SIZE / 2) ** 2);
+        const smoothedIsAligned =
+          smoothedResult.confidence >= MIN_CENTER_CONFIDENCE &&
+          smoothedCenterOffset <= ANALYSIS_SIZE * CENTER_ALIGNMENT_TOLERANCE_RATIO;
+        const smoothedIsDistanceOk =
+          smoothedResult.outerRatio >= OUTER_RATIO_MIN &&
+          smoothedResult.outerRatio <= OUTER_RATIO_MAX;
+        const frameCanCapture =
+          smoothedResult.confidence >= MIN_CENTER_CONFIDENCE &&
+          smoothedIsAligned &&
+          smoothedIsDistanceOk;
+
+        if (frameCanCapture) {
+          captureOkFramesRef.current++;
+          captureNgFramesRef.current = 0;
+        } else {
+          captureNgFramesRef.current++;
+          captureOkFramesRef.current = 0;
         }
-        prevStatusRef.current = finalResult.status;
+
+        if (captureOkFramesRef.current >= CAPTURE_ENABLE_FRAMES) stableCanCaptureRef.current = true;
+        if (captureNgFramesRef.current >= CAPTURE_DISABLE_FRAMES) stableCanCaptureRef.current = false;
+
+        const finalResult: DetectionState = {
+          ...smoothedResult,
+          isAligned: smoothedIsAligned,
+          isDistanceOk: smoothedIsDistanceOk,
+          canCapture: stableCanCaptureRef.current,
+          message: stableCanCaptureRef.current
+            ? "撮影できます"
+            : frameCanCapture
+              ? "そのまま保持してください"
+              : smoothedResult.message,
+          status: stableCanCaptureRef.current ? "ok" : frameCanCapture ? "unknown" : smoothedResult.status,
+        };
+
+        smoothedDetectionRef.current = finalResult;
         setDetectionResult(finalResult);
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -619,6 +656,10 @@ export default function CameraView() {
 
   const startCamera = useCallback(async () => {
     setError(null);
+    smoothedDetectionRef.current = null;
+    stableCanCaptureRef.current = false;
+    captureOkFramesRef.current = 0;
+    captureNgFramesRef.current = 0;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -711,6 +752,10 @@ export default function CameraView() {
     setCapturedImage(null);
     setSaved(false);
     setCalibrationData(null);
+    smoothedDetectionRef.current = null;
+    stableCanCaptureRef.current = false;
+    captureOkFramesRef.current = 0;
+    captureNgFramesRef.current = 0;
     setDetectionResult(initialDetection);
     setState("idle");
   }, []);
@@ -724,6 +769,12 @@ export default function CameraView() {
   const isOk = detectionResult.canCapture;
   const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
+  const previewVideoW = videoRef.current?.videoWidth || ANALYSIS_SIZE;
+  const previewVideoH = videoRef.current?.videoHeight || ANALYSIS_SIZE;
+  const plannedFilename = createCaptureFilename(
+    scaleDetectionToImage(detectionResult, previewVideoW, previewVideoH),
+    new Date()
+  );
 
   if (state === "idle") {
     return (
@@ -754,6 +805,27 @@ export default function CameraView() {
       }}>
         <img src={capturedImage} alt="撮影画像"
           style={{ width: "100%", maxWidth: "400px", borderRadius: "12px", flexShrink: 0 }} />
+        {calibrationData && (
+          <div style={{
+            background: "#111827", borderRadius: "12px", padding: "12px 16px",
+            maxWidth: "400px", width: "100%", flexShrink: 0,
+            border: "1px solid rgba(148,163,184,0.24)",
+          }}>
+            <p style={{ color: "#94a3b8", fontSize: "11px", margin: "0 0 6px" }}>保存名</p>
+            <p style={{ color: "#e2e8f0", fontSize: "12px", margin: 0, wordBreak: "break-all", fontFamily: "monospace" }}>
+              {calibrationData.filename}
+            </p>
+            <button
+              onClick={() => navigator.clipboard?.writeText(calibrationData.filename)}
+              style={{
+                marginTop: "10px", padding: "8px 12px", background: "#334155", color: "white",
+                border: "none", borderRadius: "10px", fontSize: "13px",
+              }}
+            >
+              保存名をコピー
+            </button>
+          </div>
+        )}
         {calibrationData && (
           <div style={{ background: "#1e293b", borderRadius: "12px", padding: "12px 16px",
             maxWidth: "400px", width: "100%", fontFamily: "monospace", flexShrink: 0 }}>
@@ -868,7 +940,7 @@ export default function CameraView() {
         </div>
 
         <div style={{ marginTop: "8px", color: "rgba(255,255,255,0.4)", fontSize: "11px" }}>
-          赤リング位置: {(detectionResult.outerRatio * 100).toFixed(1)}% / 中心信頼度: {(detectionResult.confidence * 100).toFixed(0)}%
+          外周位置: {(detectionResult.outerRatio * 100).toFixed(1)}% / 中心信頼度: {(detectionResult.confidence * 100).toFixed(0)}%
         </div>
       </div>
 
@@ -889,6 +961,20 @@ export default function CameraView() {
         }}>
           📸 撮影する
         </button>
+        <div style={{
+          marginTop: "10px", maxWidth: "340px", width: "100%",
+          color: "rgba(226,232,240,0.72)", fontSize: "10px", lineHeight: 1.45,
+          fontFamily: "monospace", wordBreak: "break-all",
+          background: "rgba(0,0,0,0.36)", borderRadius: "10px", padding: "8px 10px",
+        }}>
+          center: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)}, {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
+          <br />
+          confidence: {detectionResult.confidence.toFixed(2)} / outerRatio: {detectionResult.outerRatio.toFixed(2)} / canCapture: {String(detectionResult.canCapture)}
+          <br />
+          message: {detectionResult.message}
+          <br />
+          保存予定: {plannedFilename}
+        </div>
       </div>
 
       <canvas ref={analysisCanvasRef} style={{ display: "none" }} />
