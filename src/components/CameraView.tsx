@@ -40,15 +40,17 @@ const MIN_CENTER_CONFIDENCE = 0.35;
 const CENTER_ALIGNMENT_TOLERANCE_RATIO = 0.075;
 const OUTER_RATIO_MIN = 0.62;
 const OUTER_RATIO_MAX = 1.08;
-const OUTER_RADIUS_MIN_RATIO = 0.35;
+const OUTER_RADIUS_MIN_RATIO = 0.26;
 const OUTER_RADIUS_MAX_RATIO = 0.48;
-const OUTER_EDGE_MIN_CONFIDENCE = 0.12;
+const OUTER_EDGE_MIN_CONFIDENCE = 0.06;
 const OUTER_WARNING_CONFIDENCE = 0.22;
 const CAPTURE_ENABLE_FRAMES = 6;
 const CAPTURE_DISABLE_FRAMES = 8;
 const DETECTION_SMOOTHING = 0.35;
 const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
+const GUIDE_DISPLAY_RATIO = 0.74;
+const GUIDE_MAX_SIZE = 300;
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -746,7 +748,7 @@ export default function CameraView() {
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
     const videoScale = Math.max(screenW / videoW, screenH / videoH);
-    const displaySize = Math.min(0.85 * screenW, 340);
+    const displaySize = Math.min(GUIDE_DISPLAY_RATIO * screenW, GUIDE_MAX_SIZE);
     const guideScreenRadius = (145 / 300) * displaySize;
     const outerRadiusPx = Math.round(guideScreenRadius / videoScale);
     const capturedAt = new Date();
@@ -949,7 +951,7 @@ export default function CameraView() {
         </div>
 
         <div style={{
-          position: "relative", width: "85vw", height: "85vw", maxWidth: "340px", maxHeight: "340px",
+          position: "relative", width: `${GUIDE_DISPLAY_RATIO * 100}vw`, height: `${GUIDE_DISPLAY_RATIO * 100}vw`, maxWidth: `${GUIDE_MAX_SIZE}px`, maxHeight: `${GUIDE_MAX_SIZE}px`,
           filter: showGreenGuide ? "drop-shadow(0 0 16px rgba(74,222,128,0.7))" : "none",
           transition: "filter 0.3s",
         }}>
