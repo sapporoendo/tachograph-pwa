@@ -10,6 +10,7 @@ interface TachographDetectionResult {
   centerY: number | null;
   confidence: number;
   outerRatio: number;
+  outerWarning: boolean;
   isAligned: boolean;
   isDistanceOk: boolean;
   canCapture: boolean;
@@ -37,11 +38,12 @@ const ANALYSIS_SIZE = 320;
 const TACHOGRAPH_CHART_DIAMETER_CM = 12.2;
 const MIN_CENTER_CONFIDENCE = 0.35;
 const CENTER_ALIGNMENT_TOLERANCE_RATIO = 0.075;
-const OUTER_RATIO_MIN = 0.72;
-const OUTER_RATIO_MAX = 1.0;
+const OUTER_RATIO_MIN = 0.62;
+const OUTER_RATIO_MAX = 1.08;
 const OUTER_RADIUS_MIN_RATIO = 0.35;
 const OUTER_RADIUS_MAX_RATIO = 0.48;
-const OUTER_EDGE_MIN_CONFIDENCE = 0.28;
+const OUTER_EDGE_MIN_CONFIDENCE = 0.12;
+const OUTER_WARNING_CONFIDENCE = 0.22;
 const CAPTURE_ENABLE_FRAMES = 6;
 const CAPTURE_DISABLE_FRAMES = 8;
 const DETECTION_SMOOTHING = 0.35;
@@ -51,6 +53,7 @@ const initialDetection: DetectionState = {
   centerY: null,
   confidence: 0,
   outerRatio: 0,
+  outerWarning: true,
   isAligned: false,
   isDistanceOk: false,
   canCapture: false,
@@ -118,6 +121,7 @@ function blendDetection(
     centerY: previous.centerY * keep + current.centerY * DETECTION_SMOOTHING,
     confidence: previous.confidence * keep + current.confidence * DETECTION_SMOOTHING,
     outerRatio: previous.outerRatio * keep + current.outerRatio * DETECTION_SMOOTHING,
+    outerWarning: current.outerWarning,
   };
 
   return smoothed;
@@ -220,11 +224,15 @@ function analyzeFrame(
   const centerY = best.centerY;
   const redRingFrac = best.radius / guideR;
   const centerOffset = Math.sqrt((centerX - screenCx) ** 2 + (centerY - screenCy) ** 2);
-  const confidence = best.confidence;
+  const outerWarning =
+    best.confidence < OUTER_WARNING_CONFIDENCE ||
+    redRingFrac < OUTER_RATIO_MIN ||
+    redRingFrac > OUTER_RATIO_MAX;
+  const confidence = Math.max(best.confidence, outerWarning ? MIN_CENTER_CONFIDENCE : best.confidence);
   const hasCenter = confidence >= MIN_CENTER_CONFIDENCE;
   const isAligned = hasCenter && centerOffset <= W * CENTER_ALIGNMENT_TOLERANCE_RATIO;
   const isDistanceOk = redRingFrac >= OUTER_RATIO_MIN && redRingFrac <= OUTER_RATIO_MAX;
-  const canCapture = hasCenter && isAligned && isDistanceOk;
+  const canCapture = hasCenter && isAligned;
 
   if (!hasCenter) {
     return {
@@ -232,6 +240,7 @@ function analyzeFrame(
       centerY: null,
       confidence,
       outerRatio: redRingFrac,
+      outerWarning: true,
       isAligned: false,
       isDistanceOk,
       canCapture: false,
@@ -246,10 +255,11 @@ function analyzeFrame(
       centerY,
       confidence,
       outerRatio: redRingFrac,
+      outerWarning,
       isAligned,
       isDistanceOk,
       canCapture,
-      message: redRingFrac > OUTER_RATIO_MAX ? "少し離してください" : "もう少し近づけてください",
+      message: "外周を円形ガイドに合わせてください",
       status: redRingFrac > OUTER_RATIO_MAX ? "too_close" : "too_far",
     };
   }
@@ -260,6 +270,7 @@ function analyzeFrame(
       centerY,
       confidence,
       outerRatio: redRingFrac,
+      outerWarning,
       isAligned,
       isDistanceOk,
       canCapture,
@@ -273,11 +284,12 @@ function analyzeFrame(
     centerY,
     confidence,
     outerRatio: redRingFrac,
+    outerWarning,
     isAligned,
     isDistanceOk,
     canCapture,
-    message: "撮影できます",
-    status: "ok",
+    message: outerWarning ? "外周を円形ガイドに合わせてください" : "撮影できます",
+    status: outerWarning ? "unknown" : "ok",
   };
 }
 
@@ -610,10 +622,10 @@ export default function CameraView() {
         const smoothedIsDistanceOk =
           smoothedResult.outerRatio >= OUTER_RATIO_MIN &&
           smoothedResult.outerRatio <= OUTER_RATIO_MAX;
+        const smoothedOuterWarning = smoothedResult.outerWarning || !smoothedIsDistanceOk;
         const frameCanCapture =
           smoothedResult.confidence >= MIN_CENTER_CONFIDENCE &&
-          smoothedIsAligned &&
-          smoothedIsDistanceOk;
+          smoothedIsAligned;
 
         if (frameCanCapture) {
           captureOkFramesRef.current++;
@@ -630,6 +642,7 @@ export default function CameraView() {
           ...smoothedResult,
           isAligned: smoothedIsAligned,
           isDistanceOk: smoothedIsDistanceOk,
+          outerWarning: smoothedOuterWarning,
           canCapture: stableCanCaptureRef.current,
           message: stableCanCaptureRef.current
             ? "撮影できます"
@@ -969,7 +982,9 @@ export default function CameraView() {
         }}>
           center: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)}, {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
           <br />
-          confidence: {detectionResult.confidence.toFixed(2)} / outerRatio: {detectionResult.outerRatio.toFixed(2)} / canCapture: {String(detectionResult.canCapture)}
+          confidence: {detectionResult.confidence.toFixed(2)} / outerRatio: {detectionResult.outerRatio.toFixed(2)} / outerWarning: {String(detectionResult.outerWarning)}
+          <br />
+          canCapture: {String(detectionResult.canCapture)}
           <br />
           message: {detectionResult.message}
           <br />
