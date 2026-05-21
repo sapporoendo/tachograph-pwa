@@ -47,6 +47,8 @@ const OUTER_WARNING_CONFIDENCE = 0.22;
 const CAPTURE_ENABLE_FRAMES = 6;
 const CAPTURE_DISABLE_FRAMES = 8;
 const DETECTION_SMOOTHING = 0.35;
+const GUIDE_GREEN_MIN_HOLD_MS = 1000;
+const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -590,6 +592,8 @@ export default function CameraView() {
   const stableCanCaptureRef = useRef(false);
   const captureOkFramesRef = useRef(0);
   const captureNgFramesRef = useRef(0);
+  const guideGreenStartedAtRef = useRef(0);
+  const guideGreenNgStartedAtRef = useRef<number | null>(null);
 
   const [state, setState] = useState<CaptureState>("idle");
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -597,6 +601,7 @@ export default function CameraView() {
   const [saved, setSaved] = useState(false);
   const [calibrationData, setCalibrationData] = useState<CalibrationData | null>(null);
   const [detectionResult, setDetectionResult] = useState<DetectionState>(initialDetection);
+  const [showGreenGuide, setShowGreenGuide] = useState(false);
   // チュートリアル：初回のみ表示
   const [showTutorial, setShowTutorial] = useState(false);
 
@@ -604,6 +609,32 @@ export default function CameraView() {
     const done = localStorage.getItem("tachograph_tutorial_done");
     if (!done) setShowTutorial(true);
   }, []);
+
+  useEffect(() => {
+    const now = Date.now();
+
+    if (detectionResult.canCapture) {
+      guideGreenStartedAtRef.current = now;
+      guideGreenNgStartedAtRef.current = null;
+      setShowGreenGuide(true);
+      return;
+    }
+
+    if (!showGreenGuide) return;
+
+    if (guideGreenNgStartedAtRef.current === null) {
+      guideGreenNgStartedAtRef.current = now;
+    }
+
+    const remainingHold = Math.max(0, GUIDE_GREEN_MIN_HOLD_MS - (now - guideGreenStartedAtRef.current));
+    const remainingNg = Math.max(0, GUIDE_GREEN_DISABLE_DELAY_MS - (now - guideGreenNgStartedAtRef.current));
+    const timeout = window.setTimeout(() => {
+      setShowGreenGuide(false);
+      guideGreenNgStartedAtRef.current = null;
+    }, Math.max(80, remainingHold, remainingNg));
+
+    return () => window.clearTimeout(timeout);
+  }, [detectionResult.canCapture, showGreenGuide]);
 
   const startAnalysisLoop = useCallback(() => {
     const loop = () => {
@@ -673,6 +704,9 @@ export default function CameraView() {
     stableCanCaptureRef.current = false;
     captureOkFramesRef.current = 0;
     captureNgFramesRef.current = 0;
+    guideGreenStartedAtRef.current = 0;
+    guideGreenNgStartedAtRef.current = null;
+    setShowGreenGuide(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -769,6 +803,9 @@ export default function CameraView() {
     stableCanCaptureRef.current = false;
     captureOkFramesRef.current = 0;
     captureNgFramesRef.current = 0;
+    guideGreenStartedAtRef.current = 0;
+    guideGreenNgStartedAtRef.current = null;
+    setShowGreenGuide(false);
     setDetectionResult(initialDetection);
     setState("idle");
   }, []);
@@ -778,7 +815,7 @@ export default function CameraView() {
     return <Tutorial onDone={() => setShowTutorial(false)} />;
   }
 
-  const colors = guideColors[detectionResult.status];
+  const colors = guideColors[showGreenGuide ? "ok" : detectionResult.status];
   const isOk = detectionResult.canCapture;
   const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
@@ -913,19 +950,19 @@ export default function CameraView() {
 
         <div style={{
           position: "relative", width: "85vw", height: "85vw", maxWidth: "340px", maxHeight: "340px",
-          filter: isOk ? "drop-shadow(0 0 16px rgba(74,222,128,0.7))" : "none",
+          filter: showGreenGuide ? "drop-shadow(0 0 16px rgba(74,222,128,0.7))" : "none",
           transition: "filter 0.3s",
         }}>
           <svg viewBox="0 0 300 300" style={{ width: "100%", height: "100%", overflow: "visible" }}>
             <circle cx="150" cy="150" r="145" fill="none"
               stroke={colors.outer} strokeWidth="3"
-              strokeDasharray={isOk ? "0" : "10 5"} />
+              strokeDasharray={showGreenGuide ? "0" : "10 5"} />
             <circle cx="150" cy="150" r="130" fill="none"
               stroke={colors.mid} strokeWidth="2"
-              strokeDasharray={isOk ? "0" : "6 4"} />
+              strokeDasharray={showGreenGuide ? "0" : "6 4"} />
             <circle cx="150" cy="150" r="106" fill="none"
               stroke={colors.inner} strokeWidth="2"
-              strokeDasharray={isOk ? "0" : "5 4"} />
+              strokeDasharray={showGreenGuide ? "0" : "5 4"} />
             {/* 画面中央の十字補助線 */}
             <line x1="150" y1="0" x2="150" y2="300" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
             <line x1="0" y1="150" x2="300" y2="150" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
