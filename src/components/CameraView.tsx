@@ -79,6 +79,20 @@ function createCaptureFilename(detection: TachographDetectionResult, date: Date)
   return `takomiru_center_${center}_${formatTimestamp(date)}.jpg`;
 }
 
+function scaleDetectionToImage(
+  detection: TachographDetectionResult,
+  imageWidth: number,
+  imageHeight: number
+): TachographDetectionResult {
+  if (detection.centerX === null || detection.centerY === null) return detection;
+
+  return {
+    ...detection,
+    centerX: detection.centerX / ANALYSIS_SIZE * imageWidth,
+    centerY: detection.centerY / ANALYSIS_SIZE * imageHeight,
+  };
+}
+
 function analyzeFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement
@@ -648,17 +662,18 @@ export default function CameraView() {
     const guideScreenRadius = (145 / 300) * displaySize;
     const outerRadiusPx = Math.round(guideScreenRadius / videoScale);
     const capturedAt = new Date();
-    const filename = createCaptureFilename(detectionResult, capturedAt);
+    const imageDetection = scaleDetectionToImage(detectionResult, videoW, videoH);
+    const filename = createCaptureFilename(imageDetection, capturedAt);
 
     const calibration = {
-      center_x: detectionResult.centerX === null ? null : Math.round(detectionResult.centerX),
-      center_y: detectionResult.centerY === null ? null : Math.round(detectionResult.centerY),
+      center_x: imageDetection.centerX === null ? null : Math.round(imageDetection.centerX),
+      center_y: imageDetection.centerY === null ? null : Math.round(imageDetection.centerY),
       outer_radius: outerRadiusPx,
       image_width: videoW,
       image_height: videoH,
       chart_diameter_cm: TACHOGRAPH_CHART_DIAMETER_CM,
       captured_at: capturedAt.toISOString(),
-      detection: detectionResult,
+      detection: imageDetection,
       filename,
     };
 
