@@ -51,6 +51,7 @@ const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
 const GUIDE_DISPLAY_RATIO = 0.85;
 const GUIDE_MAX_SIZE = 340;
+const FIXED_CAMERA_ZOOM = 1;
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -129,6 +130,81 @@ function blendDetection(
   };
 
   return smoothed;
+}
+
+function isLikelyUltraWideCamera(label: string): boolean {
+  const normalized = label.toLowerCase();
+  return normalized.includes("ultra") || normalized.includes("0.5") || normalized.includes("超広角");
+}
+
+function scoreEnvironmentCamera(device: MediaDeviceInfo): number {
+  const label = device.label.toLowerCase();
+  let score = 0;
+
+  if (label.includes("back") || label.includes("rear") || label.includes("environment") || label.includes("背面")) score += 30;
+  if (label.includes("wide") || label.includes("広角")) score += 10;
+  if (label.includes("camera")) score += 2;
+  if (isLikelyUltraWideCamera(label)) score -= 60;
+  if (label.includes("front") || label.includes("user") || label.includes("selfie") || label.includes("前面")) score -= 80;
+  if (label.includes("tele") || label.includes("望遠")) score -= 20;
+
+  return score;
+}
+
+async function getPreferredVideoConstraints(): Promise<MediaTrackConstraints> {
+  const baseConstraints: MediaTrackConstraints = {
+    facingMode: "environment",
+    width: { ideal: 3840 },
+    height: { ideal: 2160 },
+  };
+
+  if (!navigator.mediaDevices?.enumerateDevices) return baseConstraints;
+
+  let devices = await navigator.mediaDevices.enumerateDevices();
+  let videoDevices = devices.filter((device) => device.kind === "videoinput");
+
+  if (videoDevices.every((device) => !device.label)) {
+    let temporaryStream: MediaStream | null = null;
+    try {
+      temporaryStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      devices = await navigator.mediaDevices.enumerateDevices();
+      videoDevices = devices.filter((device) => device.kind === "videoinput");
+    } catch {
+      return baseConstraints;
+    } finally {
+      temporaryStream?.getTracks().forEach((track) => track.stop());
+    }
+  }
+
+  const preferredDevice = videoDevices
+    .filter((device) => !isLikelyUltraWideCamera(device.label))
+    .sort((a, b) => scoreEnvironmentCamera(b) - scoreEnvironmentCamera(a))[0];
+
+  if (!preferredDevice?.deviceId || scoreEnvironmentCamera(preferredDevice) <= 0) return baseConstraints;
+
+  return {
+    ...baseConstraints,
+    // iOS Safari/PWAでは背面カメラ群が仮想デバイスとして扱われ、deviceId指定でもレンズ切替を完全には止められない場合がある。
+    deviceId: { exact: preferredDevice.deviceId },
+  };
+}
+
+async function lockCameraZoom(stream: MediaStream) {
+  const [track] = stream.getVideoTracks();
+  if (!track?.getCapabilities || !track.applyConstraints) return;
+
+  const capabilities = track.getCapabilities() as MediaTrackCapabilities & {
+    zoom?: { min: number; max: number; step?: number };
+  };
+  if (!capabilities.zoom) return;
+
+  const zoom = Math.max(capabilities.zoom.min, Math.min(FIXED_CAMERA_ZOOM, capabilities.zoom.max));
+  try {
+    // zoom制約もiOS Safariでは非対応または無視されることがあるため、対応端末だけ1x付近へ固定する。
+    await track.applyConstraints({ advanced: [{ zoom }] } as unknown as MediaTrackConstraints);
+  } catch {
+    // レンズ固定はベストエフォート。失敗してもカメラ起動は継続する。
+  }
 }
 
 function analyzeFrame(
@@ -710,15 +786,30 @@ export default function CameraView() {
     guideGreenNgStartedAtRef.current = null;
     setShowGreenGuide(false);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 3840 },
-          height: { ideal: 2160 },
-        },
-        audio: false,
-      });
+      const videoConstraints = await getPreferredVideoConstraints();
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "environment",
+            width: { ideal: 3840 },
+            height: { ideal: 2160 },
+          },
+          audio: false,
+        });
+      }
+      await lockCameraZoom(stream);
       streamRef.current = stream;
+      smoothedDetectionRef.current = null;
+      stableCanCaptureRef.current = false;
+      captureOkFramesRef.current = 0;
+      captureNgFramesRef.current = 0;
+      setDetectionResult(initialDetection);
       setState("preview");
     } catch (err) {
       console.error(err);
