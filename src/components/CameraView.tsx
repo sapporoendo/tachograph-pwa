@@ -462,6 +462,29 @@ async function shareOrDownloadCalibrationJson(calibration: CalibrationData) {
   downloadBlob(blob, calibration.json_filename);
 }
 
+async function shareAnalysisFiles(blobUrl: string, calibration: CalibrationData) {
+  const imageResponse = await fetch(blobUrl);
+  const imageBlob = await imageResponse.blob();
+  const imageFile = new File([imageBlob], calibration.filename, { type: "image/jpeg" });
+  const jsonFile = new File(
+    [createCalibrationJsonBlob(calibration)],
+    calibration.json_filename,
+    { type: "application/json" }
+  );
+  const shareData: ShareData = {
+    files: [imageFile, jsonFile],
+    title: calibration.filename,
+    text: `${calibration.filename}\n${calibration.json_filename}`,
+  };
+
+  if (navigator.canShare?.(shareData)) {
+    await navigator.share(shareData);
+    return;
+  }
+
+  throw new Error("この環境では複数ファイル共有に対応していません。");
+}
+
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
   ok:        { outer: "rgba(74,222,128,0.95)",  mid: "rgba(74,222,128,0.8)",  inner: "rgba(74,222,128,0.8)"  },
   too_close: { outer: "rgba(248,113,113,0.95)", mid: "rgba(248,113,113,0.8)", inner: "rgba(248,113,113,0.8)" },
@@ -1120,6 +1143,19 @@ export default function CameraView() {
             </p>
           </div>
         )}
+        {calibrationData && (
+          <div style={{
+            background: "#111827", borderRadius: "12px", padding: "12px 16px",
+            maxWidth: "400px", width: "100%", flexShrink: 0,
+            border: "1px solid rgba(148,163,184,0.24)",
+          }}>
+            <p style={{ color: "#e2e8f0", fontSize: "12px", margin: 0, lineHeight: 1.6 }}>
+              写真アプリ保存ではファイル名が `IMG_XXXX` に変わる場合があります。
+              <br />
+              解析用には AirDrop または Files 保存を推奨します。
+            </p>
+          </div>
+        )}
         <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
           <button onClick={retake} style={{
             flex: 1, padding: "14px", background: "#334155", color: "white",
@@ -1134,6 +1170,20 @@ export default function CameraView() {
             borderRadius: "12px", border: "none", fontSize: "16px"
           }}>📷 写真に保存</button>
         </div>
+        {calibrationData && (
+          <button
+            onClick={async () => {
+              await shareAnalysisFiles(capturedImage, calibrationData);
+            }}
+            style={{
+              width: "100%", maxWidth: "400px", padding: "14px",
+              background: "#0f766e", color: "white",
+              borderRadius: "12px", border: "none", fontSize: "16px", flexShrink: 0,
+            }}
+          >
+            解析用に共有
+          </button>
+        )}
       </div>
     );
   }
