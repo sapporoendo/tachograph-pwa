@@ -51,7 +51,6 @@ const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
 const GUIDE_DISPLAY_RATIO = 0.85;
 const GUIDE_MAX_SIZE = 340;
-const FIXED_CAMERA_ZOOM = 1;
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -187,24 +186,6 @@ async function getPreferredVideoConstraints(): Promise<MediaTrackConstraints> {
     // iOS Safari/PWAでは背面カメラ群が仮想デバイスとして扱われ、deviceId指定でもレンズ切替を完全には止められない場合がある。
     deviceId: { exact: preferredDevice.deviceId },
   };
-}
-
-async function lockCameraZoom(stream: MediaStream) {
-  const [track] = stream.getVideoTracks();
-  if (!track?.getCapabilities || !track.applyConstraints) return;
-
-  const capabilities = track.getCapabilities() as MediaTrackCapabilities & {
-    zoom?: { min: number; max: number; step?: number };
-  };
-  if (!capabilities.zoom) return;
-
-  const zoom = Math.max(capabilities.zoom.min, Math.min(FIXED_CAMERA_ZOOM, capabilities.zoom.max));
-  try {
-    // zoom制約もiOS Safariでは非対応または無視されることがあるため、対応端末だけ1x付近へ固定する。
-    await track.applyConstraints({ advanced: [{ zoom }] } as unknown as MediaTrackConstraints);
-  } catch {
-    // レンズ固定はベストエフォート。失敗してもカメラ起動は継続する。
-  }
 }
 
 function analyzeFrame(
@@ -803,7 +784,6 @@ export default function CameraView() {
           audio: false,
         });
       }
-      await lockCameraZoom(stream);
       streamRef.current = stream;
       smoothedDetectionRef.current = null;
       stableCanCaptureRef.current = false;
