@@ -5,36 +5,148 @@ import { useRef, useState, useCallback, useEffect } from "react";
 type CaptureState = "idle" | "preview" | "captured";
 type DistanceStatus = "too_close" | "ok" | "too_far" | "unknown";
 
-interface DistanceResult {
-  status: DistanceStatus;
-  ratio: number;
+interface TachographDetectionResult {
+  centerX: number | null;
+  centerY: number | null;
+  confidence: number;
+  outerRatio: number;
+  isAligned: boolean;
+  isDistanceOk: boolean;
+  canCapture: boolean;
   message: string;
+}
+
+interface DetectionState extends TachographDetectionResult {
+  status: DistanceStatus;
+}
+
+interface CalibrationData {
+  center_x: number | null;
+  center_y: number | null;
+  outer_radius: number;
+  image_width: number;
+  image_height: number;
+  chart_diameter_cm: number;
+  captured_at: string;
+  detection: TachographDetectionResult;
+  filename: string;
+}
+
+const ANALYSIS_SIZE = 320;
+// タコグラフチャート紙の物理直径。UIでは実寸補正せず、後続の解析エンジンが参照しやすいメタ情報として保持する。
+const TACHOGRAPH_CHART_DIAMETER_CM = 12.2;
+const MIN_CENTER_CONFIDENCE = 0.35;
+const MIN_RED_PIXELS_FOR_CENTER = 120;
+const MIN_RED_RING_RATIO = 0.008;
+const CENTER_ALIGNMENT_TOLERANCE_RATIO = 0.075;
+const OUTER_RATIO_MIN = 0.55;
+const OUTER_RATIO_MAX = 1.02;
+
+const initialDetection: DetectionState = {
+  centerX: null,
+  centerY: null,
+  confidence: 0,
+  outerRatio: 0,
+  isAligned: false,
+  isDistanceOk: false,
+  canCapture: false,
+  message: "カメラを向けてください",
+  status: "unknown",
+};
+
+function formatTimestamp(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    "_",
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join("");
+}
+
+function createCaptureFilename(detection: TachographDetectionResult, date: Date): string {
+  const center =
+    detection.centerX !== null &&
+    detection.centerY !== null &&
+    detection.confidence >= MIN_CENTER_CONFIDENCE
+      ? `x${Math.round(detection.centerX)}_y${Math.round(detection.centerY)}`
+      : "unknown";
+
+  // confidence / outerRatio は calibration に保持し、現場で扱いやすいようファイル名は中心座標と日時に絞る。
+  return `takomiru_center_${center}_${formatTimestamp(date)}.jpg`;
 }
 
 function analyzeFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement
-): DistanceResult {
-  const W = 320, H = 320;
+): DetectionState {
+  const W = ANALYSIS_SIZE, H = ANALYSIS_SIZE;
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return { status: "unknown", ratio: 0, message: "" };
+  if (!ctx) return initialDetection;
   ctx.drawImage(video, 0, 0, W, H);
 
-  const cx = W / 2, cy = H / 2;
+  const screenCx = W / 2, screenCy = H / 2;
   const guideR = (145 / 300) * W;
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
 
+  let redPixels = 0;
+  let redXSum = 0;
+  let redYSum = 0;
+  let minRedX = W;
+  let minRedY = H;
+  let maxRedX = 0;
+  let maxRedY = 0;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const maxCh = Math.max(r, g, b);
+      const minCh = Math.min(r, g, b);
+      const isRed =
+        r === maxCh &&
+        r > 95 &&
+        r - g > 25 &&
+        r - b > 25 &&
+        (maxCh - minCh) > 35;
+
+      if (!isRed) continue;
+
+      redPixels++;
+      redXSum += x;
+      redYSum += y;
+      minRedX = Math.min(minRedX, x);
+      minRedY = Math.min(minRedY, y);
+      maxRedX = Math.max(maxRedX, x);
+      maxRedY = Math.max(maxRedY, y);
+    }
+  }
+
+  if (redPixels < MIN_RED_PIXELS_FOR_CENTER) {
+    return {
+      ...initialDetection,
+      message: "中心を検出できません",
+    };
+  }
+
+  const centerX = redXSum / redPixels;
+  const centerY = redYSum / redPixels;
+  const redSpan = Math.max(maxRedX - minRedX, maxRedY - minRedY);
+
   const BINS = 60;
-  const BIN_MIN = 0.4;
-  const BIN_MAX = 1.0;
+  const BIN_MIN = 0.25;
+  const BIN_MAX = 1.15;
   const redCounts = new Array(BINS).fill(0);
   const binTotals = new Array(BINS).fill(0);
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const dx = x - cx, dy = y - cy;
+      const dx = x - centerX, dy = y - centerY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const frac = dist / guideR;
       if (frac < BIN_MIN || frac > BIN_MAX) continue;
@@ -71,16 +183,102 @@ function analyzeFrame(
     }
   }
 
-  if (maxRedRatio < 0.008 || maxBinIdx < 0) {
-    return { status: "unknown", ratio: 0, message: "チャート紙を枠に合わせてください" };
+  if (maxRedRatio < MIN_RED_RING_RATIO || maxBinIdx < 0) {
+    return {
+      ...initialDetection,
+      centerX,
+      centerY,
+      confidence: 0.2,
+      message: "外周を円形ガイドに合わせてください",
+    };
   }
 
   const redRingFrac = BIN_MIN + (maxBinIdx + 0.5) / BINS * (BIN_MAX - BIN_MIN);
+  const centerOffset = Math.sqrt((centerX - screenCx) ** 2 + (centerY - screenCy) ** 2);
+  const confidence = Math.min(
+    1,
+    (maxRedRatio / 0.03) * 0.55 +
+      Math.min(redPixels / 1800, 1) * 0.25 +
+      Math.min(redSpan / 220, 1) * 0.2
+  );
+  const hasCenter = confidence >= MIN_CENTER_CONFIDENCE;
+  const isAligned = hasCenter && centerOffset <= W * CENTER_ALIGNMENT_TOLERANCE_RATIO;
+  const isDistanceOk = redRingFrac >= OUTER_RATIO_MIN && redRingFrac <= OUTER_RATIO_MAX;
+  const canCapture = hasCenter && isAligned && isDistanceOk;
 
-  if (redRingFrac >= 0.55) {
-    return { status: "ok", ratio: redRingFrac, message: "ちょうどいい！撮影できます" };
+  if (!hasCenter) {
+    return {
+      centerX: null,
+      centerY: null,
+      confidence,
+      outerRatio: redRingFrac,
+      isAligned: false,
+      isDistanceOk,
+      canCapture: false,
+      message: "中心を検出できません",
+      status: "unknown",
+    };
   }
-  return { status: "too_far", ratio: redRingFrac, message: "もう少し近づけて！" };
+
+  if (!isDistanceOk) {
+    return {
+      centerX,
+      centerY,
+      confidence,
+      outerRatio: redRingFrac,
+      isAligned,
+      isDistanceOk,
+      canCapture,
+      message: redRingFrac > OUTER_RATIO_MAX ? "少し離してください" : "もう少し近づけてください",
+      status: redRingFrac > OUTER_RATIO_MAX ? "too_close" : "too_far",
+    };
+  }
+
+  if (!isAligned) {
+    return {
+      centerX,
+      centerY,
+      confidence,
+      outerRatio: redRingFrac,
+      isAligned,
+      isDistanceOk,
+      canCapture,
+      message: "中心を十字に合わせてください",
+      status: "too_far",
+    };
+  }
+
+  return {
+    centerX,
+    centerY,
+    confidence,
+    outerRatio: redRingFrac,
+    isAligned,
+    isDistanceOk,
+    canCapture,
+    message: "撮影できます",
+    status: "ok",
+  };
+}
+
+async function saveJpeg(blobUrl: string, filename: string) {
+  const res = await fetch(blobUrl);
+  const blob = await res.blob();
+  const file = new File([blob], filename, { type: "image/jpeg" });
+  const shareData: ShareData = { files: [file], title: filename };
+
+  if (navigator.canShare?.(shareData)) {
+    await navigator.share(shareData);
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  // ブラウザ/PWAから写真フォルダへ直接保存できるかはOSとブラウザ実装に依存するため、非対応時はJPEGのdownloadで保存する。
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
@@ -362,10 +560,8 @@ export default function CameraView() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [calibrationData, setCalibrationData] = useState<object | null>(null);
-  const [distResult, setDistResult] = useState<DistanceResult>({
-    status: "unknown", ratio: 0, message: "カメラを向けてください",
-  });
+  const [calibrationData, setCalibrationData] = useState<CalibrationData | null>(null);
+  const [detectionResult, setDetectionResult] = useState<DetectionState>(initialDetection);
   // チュートリアル：初回のみ表示
   const [showTutorial, setShowTutorial] = useState(false);
 
@@ -383,11 +579,17 @@ export default function CameraView() {
         // ヒステリシス：一度OKになったら緩い条件(30%〜58%)で維持→チラつき防止
         const prev = prevStatusRef.current;
         let finalResult = result;
-        if (prev === "ok" && result.ratio >= 0.55 && result.ratio <= 0.98) {
-          finalResult = { status: "ok", ratio: result.ratio, message: "ちょうどいい！撮影できます" };
+        if (
+          prev === "ok" &&
+          result.confidence >= MIN_CENTER_CONFIDENCE &&
+          result.outerRatio >= OUTER_RATIO_MIN &&
+          result.outerRatio <= OUTER_RATIO_MAX &&
+          result.isAligned
+        ) {
+          finalResult = { ...result, status: "ok", canCapture: true, message: "撮影できます" };
         }
         prevStatusRef.current = finalResult.status;
-        setDistResult(finalResult);
+        setDetectionResult(finalResult);
       }
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -434,7 +636,7 @@ export default function CameraView() {
 
   const doCapture = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !detectionResult.canCapture) return;
     stopAnalysisLoop();
 
     const videoW = video.videoWidth || 1280;
@@ -445,16 +647,20 @@ export default function CameraView() {
     const displaySize = Math.min(0.85 * screenW, 340);
     const guideScreenRadius = (145 / 300) * displaySize;
     const outerRadiusPx = Math.round(guideScreenRadius / videoScale);
+    const capturedAt = new Date();
+    const filename = createCaptureFilename(detectionResult, capturedAt);
 
     const calibration = {
-      center_x: Math.round(videoW / 2),
-      center_y: Math.round(videoH / 2),
+      center_x: detectionResult.centerX === null ? null : Math.round(detectionResult.centerX),
+      center_y: detectionResult.centerY === null ? null : Math.round(detectionResult.centerY),
       outer_radius: outerRadiusPx,
       image_width: videoW,
       image_height: videoH,
-      captured_at: new Date().toISOString(),
+      chart_diameter_cm: TACHOGRAPH_CHART_DIAMETER_CM,
+      captured_at: capturedAt.toISOString(),
+      detection: detectionResult,
+      filename,
     };
-    const filename = `tacho_cx${calibration.center_x}_cy${calibration.center_y}_r${calibration.outer_radius}.jpg`;
 
     // canvasで撮影
     const canvas = document.createElement("canvas");
@@ -468,7 +674,7 @@ export default function CameraView() {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       setCapturedImage(url);
-      setCalibrationData({ ...calibration, filename });
+      setCalibrationData(calibration);
 
       const history = JSON.parse(localStorage.getItem("tachograph_history") || "[]");
       history.unshift({
@@ -484,12 +690,13 @@ export default function CameraView() {
       setState("captured");
       setSaved(false);
     }, "image/jpeg", 0.95);
-  }, [stopAnalysisLoop]);
+  }, [detectionResult, stopAnalysisLoop]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
     setSaved(false);
-    setDistResult({ status: "unknown", ratio: 0, message: "カメラを向けてください" });
+    setCalibrationData(null);
+    setDetectionResult(initialDetection);
     setState("idle");
   }, []);
 
@@ -498,14 +705,16 @@ export default function CameraView() {
     return <Tutorial onDone={() => setShowTutorial(false)} />;
   }
 
-  const colors = guideColors[distResult.status];
-  const isOk = distResult.status === "ok";
+  const colors = guideColors[detectionResult.status];
+  const isOk = detectionResult.canCapture;
+  const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
+  const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
 
   if (state === "idle") {
     return (
       <div style={{ position: "fixed", inset: 0, background: "#0f172a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "24px" }}>
         <p style={{ color: "#94a3b8", fontSize: "14px", textAlign: "center", padding: "0 16px" }}>
-          タコグラフのチャート紙をガイド円に合わせて撮影してください
+          12時位置を画面上側へ、中心を十字へ、外周を円形ガイドへ合わせて撮影してください
         </p>
         <button onClick={startCamera} style={{ padding: "16px 32px", background: "#2563eb", color: "white", borderRadius: "16px", fontSize: "18px", fontWeight: "bold", border: "none" }}>
           カメラを起動
@@ -549,7 +758,7 @@ export default function CameraView() {
               ✅ 保存できました！
             </p>
             <p style={{ color: "#4ade80", fontSize: "12px", margin: "4px 0 0" }}>
-              写真アプリに保存されています
+              共有またはJPEGダウンロードを開始しました
             </p>
           </div>
         )}
@@ -559,13 +768,8 @@ export default function CameraView() {
             borderRadius: "12px", border: "none", fontSize: "16px"
           }}>撮り直し</button>
           <button onClick={async () => {
-            const filename = (calibrationData as any) 
-              ? `tacho_cx${(calibrationData as any).center_x}_cy${(calibrationData as any).center_y}_r${(calibrationData as any).outer_radius}.jpg` 
-              : "tacho.jpg";
-            const res = await fetch(capturedImage!);
-            const blob = await res.blob();
-            const file = new File([blob], filename, { type: "image/jpeg" });
-            await navigator.share({ files: [file], title: filename });
+            const filename = calibrationData?.filename ?? createCaptureFilename(initialDetection, new Date());
+            await saveJpeg(capturedImage, filename);
             setSaved(true);
           }} style={{
             flex: 1, padding: "14px", background: "#16a34a", color: "white",
@@ -588,14 +792,23 @@ export default function CameraView() {
         <div style={{
           marginBottom: "12px", padding: "8px 20px", borderRadius: "999px",
           background: "rgba(0,0,0,0.55)",
-          color: isOk ? "#4ade80" : distResult.status === "too_close" ? "#f87171" : distResult.status === "too_far" ? "#facc15" : "white",
+          color: isOk ? "#4ade80" : detectionResult.status === "too_close" ? "#f87171" : detectionResult.status === "too_far" ? "#facc15" : "white",
           fontSize: "15px", fontWeight: "bold", textShadow: "0 1px 4px black",
           transition: "color 0.3s",
         }}>
-          {distResult.status === "too_close" && "⬆️ "}
-          {distResult.status === "too_far" && "⬇️ "}
+          {detectionResult.status === "too_close" && "⬆️ "}
+          {detectionResult.status === "too_far" && "⬇️ "}
           {isOk && "✅ "}
-          {distResult.message}
+          {detectionResult.message}
+        </div>
+        <div style={{
+          marginBottom: "10px", padding: "7px 14px", borderRadius: "12px",
+          background: "rgba(0,0,0,0.42)",
+          color: "rgba(255,255,255,0.86)",
+          fontSize: "12px", lineHeight: 1.5, textAlign: "center",
+          textShadow: "0 1px 3px black",
+        }}>
+          12時を上に / 中心を十字に / 外周を円形ガイドに
         </div>
 
         <div style={{
@@ -613,9 +826,19 @@ export default function CameraView() {
             <circle cx="150" cy="150" r="106" fill="none"
               stroke={colors.inner} strokeWidth="2"
               strokeDasharray={isOk ? "0" : "5 4"} />
-            {/* 中心十字 */}
-            <line x1="130" y1="150" x2="170" y2="150" stroke="white" strokeWidth="2" />
-            <line x1="150" y1="130" x2="150" y2="170" stroke="white" strokeWidth="2" />
+            {/* 画面中央の十字補助線 */}
+            <line x1="150" y1="0" x2="150" y2="300" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
+            <line x1="0" y1="150" x2="300" y2="150" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
+            <line x1="130" y1="150" x2="170" y2="150" stroke="white" strokeWidth="2.5" />
+            <line x1="150" y1="130" x2="150" y2="170" stroke="white" strokeWidth="2.5" />
+            {markerX !== null && markerY !== null && (
+              <>
+                <line x1={markerX - 12} y1={markerY} x2={markerX + 12} y2={markerY} stroke="#fb7185" strokeWidth="2.5" />
+                <line x1={markerX} y1={markerY - 12} x2={markerX} y2={markerY + 12} stroke="#fb7185" strokeWidth="2.5" />
+                <circle cx={markerX} cy={markerY} r="7" fill="none" stroke="#fb7185" strokeWidth="2.5" />
+                <line x1="150" y1="150" x2={markerX} y2={markerY} stroke="#fb7185" strokeWidth="1.5" opacity={0.8} strokeDasharray="3,3" />
+              </>
+            )}
             {/* 12時ライン（上部） */}
             <line x1="150" y1="5" x2="150" y2="155" stroke={colors.outer} strokeWidth="2" opacity={0.6} strokeDasharray="4,4" />
             <line x1="144" y1="5" x2="156" y2="5" stroke={colors.outer} strokeWidth="3" strokeLinecap="round" />
@@ -630,7 +853,7 @@ export default function CameraView() {
         </div>
 
         <div style={{ marginTop: "8px", color: "rgba(255,255,255,0.4)", fontSize: "11px" }}>
-          赤リング位置: {(distResult.ratio * 100).toFixed(1)}%
+          赤リング位置: {(detectionResult.outerRatio * 100).toFixed(1)}% / 中心信頼度: {(detectionResult.confidence * 100).toFixed(0)}%
         </div>
       </div>
 
@@ -639,15 +862,15 @@ export default function CameraView() {
         padding: "24px 24px 48px",
         background: "linear-gradient(to top, rgba(0,0,0,0.7), transparent)",
         display: "flex", flexDirection: "column", alignItems: "center",
-        opacity: isOk ? 1 : 0,
-        pointerEvents: isOk ? "auto" : "none",
+        opacity: 1,
+        pointerEvents: "auto",
         transition: "opacity 0.3s",
       }}>
-        <button onClick={doCapture} style={{
+        <button onClick={doCapture} disabled={!isOk} style={{
           width: "100%", maxWidth: "320px", padding: "18px",
-          background: "#16a34a", color: "white",
+          background: isOk ? "#16a34a" : "#334155", color: isOk ? "white" : "#94a3b8",
           borderRadius: "16px", fontSize: "20px", fontWeight: "bold", border: "none",
-          boxShadow: "0 4px 24px rgba(22,163,74,0.6)",
+          boxShadow: isOk ? "0 4px 24px rgba(22,163,74,0.6)" : "none",
         }}>
           📸 撮影する
         </button>
