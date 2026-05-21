@@ -24,13 +24,23 @@ interface DetectionState extends TachographDetectionResult {
 interface CalibrationData {
   center_x: number | null;
   center_y: number | null;
+  outer_ratio: number;
   outer_radius: number;
   image_width: number;
   image_height: number;
+  confidence: number;
+  outer_warning: boolean;
+  can_capture: boolean;
+  message: string;
   chart_diameter_cm: number;
+  timestamp: string;
+  user_agent: string;
+  selected_camera_label: string | null;
+  selected_camera_device_id: string | null;
   captured_at: string;
   detection: TachographDetectionResult;
   filename: string;
+  json_filename: string;
 }
 
 const ANALYSIS_SIZE = 320;
@@ -372,6 +382,42 @@ async function saveJpeg(blobUrl: string, filename: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function createJsonFilename(filename: string): string {
+  return filename.replace(/\.jpe?g$/i, ".json");
+}
+
+function createCalibrationJsonBlob(calibration: CalibrationData): Blob {
+  return new Blob([JSON.stringify(calibration, null, 2)], { type: "application/json" });
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function shareOrDownloadCalibrationJson(calibration: CalibrationData) {
+  const blob = createCalibrationJsonBlob(calibration);
+  const file = new File([blob], calibration.json_filename, { type: "application/json" });
+  const shareData: ShareData = {
+    files: [file],
+    title: calibration.json_filename,
+    text: calibration.json_filename,
+  };
+
+  if (navigator.canShare?.(shareData)) {
+    await navigator.share(shareData);
+    return;
+  }
+
+  downloadBlob(blob, calibration.json_filename);
 }
 
 const guideColors: Record<DistanceStatus, { outer: string; mid: string; inner: string }> = {
@@ -825,17 +871,30 @@ export default function CameraView() {
     const capturedAt = new Date();
     const imageDetection = scaleDetectionToImage(detectionResult, videoW, videoH);
     const filename = createCaptureFilename(imageDetection, capturedAt);
+    const jsonFilename = createJsonFilename(filename);
+    const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
+    const trackSettings = videoTrack?.getSettings();
 
     const calibration = {
       center_x: imageDetection.centerX === null ? null : Math.round(imageDetection.centerX),
       center_y: imageDetection.centerY === null ? null : Math.round(imageDetection.centerY),
+      outer_ratio: imageDetection.outerRatio,
       outer_radius: outerRadiusPx,
       image_width: videoW,
       image_height: videoH,
+      confidence: imageDetection.confidence,
+      outer_warning: imageDetection.outerWarning,
+      can_capture: imageDetection.canCapture,
+      message: imageDetection.message,
       chart_diameter_cm: TACHOGRAPH_CHART_DIAMETER_CM,
+      timestamp: capturedAt.toISOString(),
+      user_agent: navigator.userAgent,
+      selected_camera_label: videoTrack?.label || null,
+      selected_camera_device_id: trackSettings?.deviceId || null,
       captured_at: capturedAt.toISOString(),
       detection: imageDetection,
       filename,
+      json_filename: jsonFilename,
     };
 
     // canvasで撮影
@@ -947,6 +1006,38 @@ export default function CameraView() {
             >
               保存名をコピー
             </button>
+          </div>
+        )}
+        {calibrationData && (
+          <div style={{
+            background: "#111827", borderRadius: "12px", padding: "12px 16px",
+            maxWidth: "400px", width: "100%", flexShrink: 0,
+            border: "1px solid rgba(148,163,184,0.24)",
+          }}>
+            <p style={{ color: "#94a3b8", fontSize: "11px", margin: "0 0 6px" }}>JSON保存名</p>
+            <p style={{ color: "#e2e8f0", fontSize: "12px", margin: 0, wordBreak: "break-all", fontFamily: "monospace" }}>
+              {calibrationData.json_filename}
+            </p>
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button
+                onClick={() => navigator.clipboard?.writeText(JSON.stringify(calibrationData, null, 2))}
+                style={{
+                  flex: 1, padding: "8px 10px", background: "#334155", color: "white",
+                  border: "none", borderRadius: "10px", fontSize: "13px",
+                }}
+              >
+                JSONをコピー
+              </button>
+              <button
+                onClick={() => shareOrDownloadCalibrationJson(calibrationData)}
+                style={{
+                  flex: 1, padding: "8px 10px", background: "#0f766e", color: "white",
+                  border: "none", borderRadius: "10px", fontSize: "13px",
+                }}
+              >
+                JSON保存
+              </button>
+            </div>
           </div>
         )}
         {calibrationData && (
