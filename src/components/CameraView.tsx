@@ -24,6 +24,9 @@ interface DetectionState extends TachographDetectionResult {
 interface SelectedCameraDebugInfo {
   label: string | null;
   deviceId: string | null;
+  width: number | null;
+  height: number | null;
+  facingMode: string | null;
 }
 
 interface CalibrationData {
@@ -99,12 +102,22 @@ const initialDetection: DetectionState = {
   status: "unknown",
 };
 
+function hasOuterCandidate(detection: DetectionState): boolean {
+  return detection.confidence >= OUTER_EDGE_MIN_CONFIDENCE && detection.outerRatio >= OUTER_RATIO_MIN;
+}
+
 function getCanCaptureBlockReason(detection: DetectionState, stableOkFrames: number): string {
   if (detection.canCapture) return "none";
+  if (!hasOuterCandidate(detection)) return detection.outerRatio < OUTER_RATIO_MIN ? "outerRatio too small" : "outer candidate missing";
   if (detection.centerX === null || detection.centerY === null || detection.confidence < MIN_CENTER_CONFIDENCE) return "confidence low";
   if (!detection.isAligned) return "center not aligned";
   if (stableOkFrames < CAPTURE_ENABLE_FRAMES) return "waiting stable frames";
   return "waiting stable frames";
+}
+
+function getShowGreenGuideBlockReason(detection: DetectionState, stableOkFrames: number): string {
+  if (detection.canCapture) return "none";
+  return getCanCaptureBlockReason(detection, stableOkFrames);
 }
 
 function formatTimestamp(date: Date): string {
@@ -354,7 +367,7 @@ function analyzeFrame(
     best.confidence < OUTER_WARNING_CONFIDENCE ||
     redRingFrac < OUTER_RATIO_MIN ||
     redRingFrac > OUTER_RATIO_MAX;
-  const confidence = Math.max(best.confidence, outerWarning ? MIN_CENTER_CONFIDENCE : best.confidence);
+  const confidence = best.confidence;
   const hasCenter = confidence >= MIN_CENTER_CONFIDENCE;
   const isAligned = hasCenter && centerOffset <= W * CENTER_ALIGNMENT_TOLERANCE_RATIO;
   const isDistanceOk = redRingFrac >= OUTER_RATIO_MIN && redRingFrac <= OUTER_RATIO_MAX;
@@ -777,6 +790,7 @@ export default function CameraView() {
   const captureNgFramesRef = useRef(0);
   const guideGreenStartedAtRef = useRef(0);
   const guideGreenNgStartedAtRef = useRef<number | null>(null);
+  const detectionFrameRef = useRef(0);
 
   const [state, setState] = useState<CaptureState>("idle");
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -785,7 +799,13 @@ export default function CameraView() {
   const [calibrationData, setCalibrationData] = useState<CalibrationData | null>(null);
   const [detectionResult, setDetectionResult] = useState<DetectionState>(initialDetection);
   const [showGreenGuide, setShowGreenGuide] = useState(false);
-  const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({ label: null, deviceId: null });
+  const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({
+    label: null,
+    deviceId: null,
+    width: null,
+    height: null,
+    facingMode: null,
+  });
   // チュートリアル：初回のみ表示
   const [showTutorial, setShowTutorial] = useState(false);
 
@@ -838,7 +858,13 @@ export default function CameraView() {
           smoothedResult.outerRatio >= OUTER_RATIO_MIN &&
           smoothedResult.outerRatio <= OUTER_RATIO_MAX;
         const smoothedOuterWarning = smoothedResult.outerWarning || !smoothedIsDistanceOk;
+        const smoothedHasOuterCandidate = hasOuterCandidate({
+          ...smoothedResult,
+          isDistanceOk: smoothedIsDistanceOk,
+          outerWarning: smoothedOuterWarning,
+        });
         const frameCanCapture =
+          smoothedHasOuterCandidate &&
           smoothedResult.confidence >= MIN_CENTER_CONFIDENCE &&
           smoothedIsAligned;
 
@@ -868,6 +894,16 @@ export default function CameraView() {
         };
 
         smoothedDetectionRef.current = finalResult;
+        detectionFrameRef.current++;
+        const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
+        const trackSettings = videoTrack?.getSettings();
+        setSelectedCamera({
+          label: videoTrack?.label || null,
+          deviceId: trackSettings?.deviceId || null,
+          width: trackSettings?.width || null,
+          height: trackSettings?.height || null,
+          facingMode: trackSettings?.facingMode || null,
+        });
         setDetectionResult(finalResult);
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -890,6 +926,7 @@ export default function CameraView() {
     captureNgFramesRef.current = 0;
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
+    detectionFrameRef.current = 0;
     setShowGreenGuide(false);
     try {
       const videoConstraints = await getPreferredVideoConstraints();
@@ -911,9 +948,13 @@ export default function CameraView() {
       }
       streamRef.current = stream;
       const videoTrack = stream.getVideoTracks()[0] ?? null;
+      const trackSettings = videoTrack?.getSettings();
       setSelectedCamera({
         label: videoTrack?.label || null,
-        deviceId: videoTrack?.getSettings().deviceId || null,
+        deviceId: trackSettings?.deviceId || null,
+        width: trackSettings?.width || null,
+        height: trackSettings?.height || null,
+        facingMode: trackSettings?.facingMode || null,
       });
       smoothedDetectionRef.current = null;
       stableCanCaptureRef.current = false;
@@ -1033,7 +1074,8 @@ export default function CameraView() {
     captureNgFramesRef.current = 0;
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
-    setSelectedCamera({ label: null, deviceId: null });
+    detectionFrameRef.current = 0;
+    setSelectedCamera({ label: null, deviceId: null, width: null, height: null, facingMode: null });
     setShowGreenGuide(false);
     setDetectionResult(initialDetection);
     setState("idle");
@@ -1048,16 +1090,9 @@ export default function CameraView() {
   const isOk = detectionResult.canCapture;
   const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
-  const previewVideoW = videoRef.current?.videoWidth || ANALYSIS_SIZE;
-  const previewVideoH = videoRef.current?.videoHeight || ANALYSIS_SIZE;
-  const previewMapping = getAnalysisMapping(previewVideoW, previewVideoH);
-  const previewCenter = mapAnalysisPointToSavedJpeg(detectionResult.centerX, detectionResult.centerY, previewMapping);
-  const previewOuterRadius = mapAnalysisRadiusToSavedJpeg(
-    detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE),
-    previewMapping
-  );
-  const plannedFilename = createCaptureFilename(previewCenter.x, previewCenter.y, previewOuterRadius);
+  const rawOuterRadius = detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE);
   const canCaptureBlockReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
+  const showGreenGuideBlockReason = getShowGreenGuideBlockReason(detectionResult, captureOkFramesRef.current);
 
   if (state === "idle") {
     return (
@@ -1217,6 +1252,48 @@ export default function CameraView() {
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
       />
 
+      <div style={{
+        position: "absolute",
+        top: "calc(env(safe-area-inset-top, 0px) + 8px)",
+        left: "8px",
+        right: "8px",
+        zIndex: 40,
+        maxHeight: "32vh",
+        overflow: "auto",
+        padding: "8px 10px",
+        color: "white",
+        fontSize: "11px",
+        lineHeight: 1.45,
+        fontFamily: "monospace",
+        wordBreak: "break-all",
+        background: "rgba(0,0,0,0.72)",
+        border: "1px solid rgba(255,255,255,0.18)",
+        borderRadius: "10px",
+        textShadow: "0 1px 2px black",
+      }}>
+        false reason: {canCaptureBlockReason}
+        <br />
+        showGreen false reason: {showGreenGuide ? "none" : showGreenGuideBlockReason}
+        <br />
+        detection frames: {detectionFrameRef.current}
+        <br />
+        canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)}
+        <br />
+        stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
+        <br />
+        confidence: {detectionResult.confidence.toFixed(2)} / isAligned: {String(detectionResult.isAligned)}
+        <br />
+        outerRatio: {detectionResult.outerRatio.toFixed(2)} / outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)}
+        <br />
+        rawOuterRadius: {rawOuterRadius.toFixed(1)} / display: {showGreenGuide ? "green" : detectionResult.status === "too_far" ? "yellow" : detectionResult.status === "too_close" ? "red" : "white"}
+        <br />
+        selected camera label: {selectedCamera.label ?? "-"}
+        <br />
+        selected deviceId: {selectedCamera.deviceId ?? "-"}
+        <br />
+        track: {selectedCamera.width ?? "-"}x{selectedCamera.height ?? "-"} / facingMode: {selectedCamera.facingMode ?? "-"}
+      </div>
+
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10, pointerEvents: "none" }}>
         <div style={{
           marginBottom: "12px", padding: "8px 20px", borderRadius: "999px",
@@ -1303,32 +1380,6 @@ export default function CameraView() {
         }}>
           📸 撮影する
         </button>
-        <div style={{
-          marginTop: "10px", maxWidth: "340px", width: "100%",
-          color: "rgba(226,232,240,0.72)", fontSize: "10px", lineHeight: 1.45,
-          fontFamily: "monospace", wordBreak: "break-all",
-          background: "rgba(0,0,0,0.36)", borderRadius: "10px", padding: "8px 10px",
-        }}>
-          canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)}
-          <br />
-          stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
-          <br />
-          centerX: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)} / centerY: {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
-          <br />
-          confidence: {detectionResult.confidence.toFixed(2)} / outerRatio: {detectionResult.outerRatio.toFixed(2)}
-          <br />
-          outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)} / isAligned: {String(detectionResult.isAligned)}
-          <br />
-          selected camera label: {selectedCamera.label ?? "-"}
-          <br />
-          selected deviceId: {selectedCamera.deviceId ?? "-"}
-          <br />
-          false reason: {canCaptureBlockReason}
-          <br />
-          message: {detectionResult.message}
-          <br />
-          保存予定: {plannedFilename}
-        </div>
       </div>
 
       <canvas ref={analysisCanvasRef} style={{ display: "none" }} />
