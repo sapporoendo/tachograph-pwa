@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 
 type CaptureState = "idle" | "preview" | "captured";
 type DistanceStatus = "too_close" | "ok" | "too_far" | "unknown";
+type CaptureQuality = "good" | "warning" | "manual";
 
 interface TachographDetectionResult {
   centerX: number | null;
@@ -53,6 +54,10 @@ interface CalibrationData {
   confidence: number;
   outer_warning: boolean;
   can_capture: boolean;
+  show_green_guide: boolean;
+  capture_quality: CaptureQuality;
+  false_reason: string;
+  is_aligned: boolean;
   message: string;
   chart_diameter_cm: number;
   timestamp: string;
@@ -126,6 +131,19 @@ function getCanCaptureBlockReason(detection: DetectionState, stableOkFrames: num
 function getShowGreenGuideBlockReason(detection: DetectionState, stableOkFrames: number): string {
   if (detection.canCapture) return "none";
   return getCanCaptureBlockReason(detection, stableOkFrames);
+}
+
+function getCaptureQuality(detection: DetectionState, greenGuideVisible: boolean): CaptureQuality {
+  if (greenGuideVisible || detection.canCapture) return "good";
+  if (detection.status === "too_far" || detection.status === "too_close") return "warning";
+  if (detection.confidence >= MIN_CENTER_CONFIDENCE || hasOuterCandidate(detection)) return "warning";
+  return "manual";
+}
+
+function getCaptureButtonLabel(quality: CaptureQuality): string {
+  if (quality === "good") return "撮影する";
+  if (quality === "warning") return "注意して撮影";
+  return "手動で撮影";
 }
 
 function formatTimestamp(date: Date): string {
@@ -1042,7 +1060,7 @@ export default function CameraView() {
 
   const doCapture = useCallback(() => {
     const video = videoRef.current;
-    if (!video || !detectionResult.canCapture) return;
+    if (!video || !streamRef.current) return;
     stopAnalysisLoop();
 
     const videoW = video.videoWidth || 1280;
@@ -1062,6 +1080,8 @@ export default function CameraView() {
     const jsonFilename = createJsonFilename(filename);
     const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
     const trackSettings = videoTrack?.getSettings();
+    const falseReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
+    const captureQuality = getCaptureQuality(detectionResult, showGreenGuide);
 
     const calibration = {
       cx: mappedCenter.x === null ? null : Math.round(mappedCenter.x),
@@ -1082,6 +1102,10 @@ export default function CameraView() {
       confidence: detectionResult.confidence,
       outer_warning: detectionResult.outerWarning,
       can_capture: detectionResult.canCapture,
+      show_green_guide: showGreenGuide,
+      capture_quality: captureQuality,
+      false_reason: falseReason,
+      is_aligned: detectionResult.isAligned,
       message: detectionResult.message,
       chart_diameter_cm: TACHOGRAPH_CHART_DIAMETER_CM,
       timestamp: capturedAt.toISOString(),
@@ -1122,7 +1146,7 @@ export default function CameraView() {
       setState("captured");
       setSaved(false);
     }, "image/jpeg", 0.95);
-  }, [detectionResult, stopAnalysisLoop]);
+  }, [detectionResult, showGreenGuide, stopAnalysisLoop]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
@@ -1156,6 +1180,14 @@ export default function CameraView() {
   const captureHoldRemainingMs = Math.max(0, Math.round(captureEnabledAtRef.current + CAPTURE_MIN_HOLD_MS - Date.now()));
   const canCaptureBlockReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
   const showGreenGuideBlockReason = getShowGreenGuideBlockReason(detectionResult, captureOkFramesRef.current);
+  const captureQuality = getCaptureQuality(detectionResult, showGreenGuide);
+  const captureButtonLabel = getCaptureButtonLabel(captureQuality);
+  const captureButtonColor = captureQuality === "good" ? "#16a34a" : captureQuality === "warning" ? "#ca8a04" : "#475569";
+  const captureButtonShadow = captureQuality === "good"
+    ? "0 4px 24px rgba(22,163,74,0.6)"
+    : captureQuality === "warning"
+      ? "0 4px 20px rgba(202,138,4,0.42)"
+      : "none";
 
   if (state === "idle") {
     return (
@@ -1340,7 +1372,7 @@ export default function CameraView() {
         <br />
         detection frames: {detectionFrameRef.current}
         <br />
-        canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)}
+        canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)} / quality: {captureQuality}
         <br />
         stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
         <br />
@@ -1443,14 +1475,27 @@ export default function CameraView() {
         pointerEvents: "auto",
         transition: "opacity 0.3s",
       }}>
-        <button onClick={doCapture} disabled={!isOk} style={{
+        <button onClick={doCapture} style={{
           width: "100%", maxWidth: "320px", padding: "18px",
-          background: isOk ? "#16a34a" : "#334155", color: isOk ? "white" : "#94a3b8",
+          background: captureButtonColor, color: "white",
           borderRadius: "16px", fontSize: "20px", fontWeight: "bold", border: "none",
-          boxShadow: isOk ? "0 4px 24px rgba(22,163,74,0.6)" : "none",
+          boxShadow: captureButtonShadow,
         }}>
-          📸 撮影する
+          📸 {captureButtonLabel}
         </button>
+        <div style={{
+          marginTop: "10px",
+          maxWidth: "340px",
+          color: "rgba(226,232,240,0.88)",
+          fontSize: "12px",
+          lineHeight: 1.55,
+          textAlign: "center",
+          textShadow: "0 1px 3px black",
+        }}>
+          緑にならなくても、中心と外周が目視で合っていれば撮影できます
+          <br />
+          解析用JSONに判定状態を保存します
+        </div>
       </div>
 
       <canvas ref={analysisCanvasRef} style={{ display: "none" }} />
