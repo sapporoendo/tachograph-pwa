@@ -86,8 +86,10 @@ const OUTER_RADIUS_MIN_RATIO = 0.26;
 const OUTER_RADIUS_MAX_RATIO = 0.48;
 const OUTER_EDGE_MIN_CONFIDENCE = 0.06;
 const OUTER_WARNING_CONFIDENCE = 0.22;
-const CAPTURE_ENABLE_FRAMES = 6;
+const CAPTURE_ENABLE_FRAMES = 3;
 const CAPTURE_DISABLE_FRAMES = 8;
+const CAPTURE_MIN_HOLD_MS = 1200;
+const CENTER_HARD_DISABLE_RATIO = 0.16;
 const DETECTION_SMOOTHING = 0.35;
 const CENTER_JUMP_SMOOTHING = 0.18;
 const GUIDE_GREEN_MIN_HOLD_MS = 1000;
@@ -828,6 +830,7 @@ export default function CameraView() {
   const stableCanCaptureRef = useRef(false);
   const captureOkFramesRef = useRef(0);
   const captureNgFramesRef = useRef(0);
+  const captureEnabledAtRef = useRef(0);
   const guideGreenStartedAtRef = useRef(0);
   const guideGreenNgStartedAtRef = useRef<number | null>(null);
   const detectionFrameRef = useRef(0);
@@ -918,8 +921,20 @@ export default function CameraView() {
           captureOkFramesRef.current = 0;
         }
 
-        if (captureOkFramesRef.current >= CAPTURE_ENABLE_FRAMES) stableCanCaptureRef.current = true;
-        if (captureNgFramesRef.current >= CAPTURE_DISABLE_FRAMES) stableCanCaptureRef.current = false;
+        const centerHardLost = smoothedCenterOffset > ANALYSIS_SIZE * CENTER_HARD_DISABLE_RATIO;
+        const holdUntil = captureEnabledAtRef.current + CAPTURE_MIN_HOLD_MS;
+
+        if (captureOkFramesRef.current >= CAPTURE_ENABLE_FRAMES && !stableCanCaptureRef.current) {
+          stableCanCaptureRef.current = true;
+          captureEnabledAtRef.current = Date.now();
+        }
+        if (centerHardLost) {
+          stableCanCaptureRef.current = false;
+          captureEnabledAtRef.current = 0;
+        } else if (captureNgFramesRef.current >= CAPTURE_DISABLE_FRAMES && Date.now() >= holdUntil) {
+          stableCanCaptureRef.current = false;
+          captureEnabledAtRef.current = 0;
+        }
 
         const finalResult: DetectionState = {
           ...smoothedResult,
@@ -966,6 +981,7 @@ export default function CameraView() {
     stableCanCaptureRef.current = false;
     captureOkFramesRef.current = 0;
     captureNgFramesRef.current = 0;
+    captureEnabledAtRef.current = 0;
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
     detectionFrameRef.current = 0;
@@ -1003,6 +1019,7 @@ export default function CameraView() {
       stableCanCaptureRef.current = false;
       captureOkFramesRef.current = 0;
       captureNgFramesRef.current = 0;
+      captureEnabledAtRef.current = 0;
       setDetectionResult(initialDetection);
       setState("preview");
     } catch (err) {
@@ -1115,6 +1132,7 @@ export default function CameraView() {
     stableCanCaptureRef.current = false;
     captureOkFramesRef.current = 0;
     captureNgFramesRef.current = 0;
+    captureEnabledAtRef.current = 0;
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
     detectionFrameRef.current = 0;
@@ -1135,6 +1153,7 @@ export default function CameraView() {
   const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
   const rawOuterRadius = detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE);
+  const captureHoldRemainingMs = Math.max(0, Math.round(captureEnabledAtRef.current + CAPTURE_MIN_HOLD_MS - Date.now()));
   const canCaptureBlockReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
   const showGreenGuideBlockReason = getShowGreenGuideBlockReason(detectionResult, captureOkFramesRef.current);
 
@@ -1324,6 +1343,8 @@ export default function CameraView() {
         canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)}
         <br />
         stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
+        <br />
+        captureHoldMs: {captureHoldRemainingMs}
         <br />
         raw_center_x: {rawCenter.x === null ? "-" : rawCenter.x.toFixed(1)} / raw_center_y: {rawCenter.y === null ? "-" : rawCenter.y.toFixed(1)}
         <br />
