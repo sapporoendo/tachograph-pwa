@@ -91,6 +91,9 @@ const OUTER_RADIUS_MIN_RATIO = 0.26;
 const OUTER_RADIUS_MAX_RATIO = 0.48;
 const OUTER_EDGE_MIN_CONFIDENCE = 0.06;
 const OUTER_WARNING_CONFIDENCE = 0.22;
+const QUALITY_GOOD_MIN_CONFIDENCE = 0.45;
+const QUALITY_GOOD_OUTER_RATIO_MIN = 0.48;
+const QUALITY_GOOD_ALIGNMENT_RATIO = 0.055;
 const CAPTURE_ENABLE_FRAMES = 3;
 const CAPTURE_DISABLE_FRAMES = 8;
 const CAPTURE_MIN_HOLD_MS = 1200;
@@ -99,8 +102,8 @@ const DETECTION_SMOOTHING = 0.35;
 const CENTER_JUMP_SMOOTHING = 0.18;
 const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
-const GUIDE_DISPLAY_RATIO = 0.85;
-const GUIDE_MAX_SIZE = 340;
+const GUIDE_DISPLAY_RATIO = 0.78;
+const GUIDE_MAX_SIZE = 310;
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -133,8 +136,19 @@ function getShowGreenGuideBlockReason(detection: DetectionState, stableOkFrames:
   return getCanCaptureBlockReason(detection, stableOkFrames);
 }
 
-function getCaptureQuality(detection: DetectionState, greenGuideVisible: boolean): CaptureQuality {
-  if (greenGuideVisible || detection.canCapture) return "good";
+function isGoodCaptureQuality(detection: DetectionState): boolean {
+  if (detection.centerX === null || detection.centerY === null) return false;
+  const centerOffset = Math.sqrt((detection.centerX - ANALYSIS_SIZE / 2) ** 2 + (detection.centerY - ANALYSIS_SIZE / 2) ** 2);
+  return (
+    detection.confidence >= QUALITY_GOOD_MIN_CONFIDENCE &&
+    detection.outerRatio >= QUALITY_GOOD_OUTER_RATIO_MIN &&
+    detection.outerRatio <= OUTER_RATIO_MAX &&
+    centerOffset <= ANALYSIS_SIZE * QUALITY_GOOD_ALIGNMENT_RATIO
+  );
+}
+
+function getCaptureQuality(detection: DetectionState): CaptureQuality {
+  if (isGoodCaptureQuality(detection)) return "good";
   if (detection.status === "too_far" || detection.status === "too_close") return "warning";
   if (detection.confidence >= MIN_CENTER_CONFIDENCE || hasOuterCandidate(detection)) return "warning";
   return "manual";
@@ -880,7 +894,7 @@ export default function CameraView() {
   useEffect(() => {
     const now = Date.now();
 
-    if (detectionResult.canCapture) {
+    if (detectionResult.canCapture && isGoodCaptureQuality(detectionResult)) {
       guideGreenStartedAtRef.current = now;
       guideGreenNgStartedAtRef.current = null;
       setShowGreenGuide(true);
@@ -901,7 +915,7 @@ export default function CameraView() {
     }, Math.max(80, remainingHold, remainingNg));
 
     return () => window.clearTimeout(timeout);
-  }, [detectionResult.canCapture, showGreenGuide]);
+  }, [detectionResult, showGreenGuide]);
 
   const startAnalysisLoop = useCallback(() => {
     const loop = () => {
@@ -1082,7 +1096,7 @@ export default function CameraView() {
     const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
     const trackSettings = videoTrack?.getSettings();
     const falseReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
-    const captureQuality = getCaptureQuality(detectionResult, showGreenGuide);
+    const captureQuality = getCaptureQuality(detectionResult);
 
     const calibration = {
       cx: mappedCenter.x === null ? null : Math.round(mappedCenter.x),
@@ -1174,15 +1188,14 @@ export default function CameraView() {
     return <Tutorial onDone={() => setShowTutorial(false)} />;
   }
 
-  const colors = guideColors[showGreenGuide ? "ok" : detectionResult.status];
-  const isOk = detectionResult.canCapture;
   const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
   const rawOuterRadius = detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE);
   const captureHoldRemainingMs = Math.max(0, Math.round(captureEnabledAtRef.current + CAPTURE_MIN_HOLD_MS - Date.now()));
   const canCaptureBlockReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
   const showGreenGuideBlockReason = getShowGreenGuideBlockReason(detectionResult, captureOkFramesRef.current);
-  const captureQuality = getCaptureQuality(detectionResult, showGreenGuide);
+  const captureQuality = getCaptureQuality(detectionResult);
+  const colors = guideColors[captureQuality === "good" ? "ok" : detectionResult.status];
   const captureButtonLabel = getCaptureButtonLabel(captureQuality);
   const captureButtonColor = captureQuality === "good" ? "#16a34a" : captureQuality === "warning" ? "#ca8a04" : "#475569";
   const captureButtonShadow = captureQuality === "good"
@@ -1389,6 +1402,8 @@ export default function CameraView() {
         <br />
         outerRatio: {detectionResult.outerRatio.toFixed(2)} / min: {OUTER_RATIO_MIN.toFixed(2)}
         <br />
+        goodMin confidence: {QUALITY_GOOD_MIN_CONFIDENCE.toFixed(2)} / outerRatio: {QUALITY_GOOD_OUTER_RATIO_MIN.toFixed(2)}
+        <br />
         outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)}
         <br />
         rawOuterRadius: {rawOuterRadius.toFixed(1)} / display: {showGreenGuide ? "green" : detectionResult.status === "too_far" ? "yellow" : detectionResult.status === "too_close" ? "red" : "white"}
@@ -1422,16 +1437,16 @@ export default function CameraView() {
 
         <div style={{
           position: "relative", width: `${GUIDE_DISPLAY_RATIO * 100}vw`, height: `${GUIDE_DISPLAY_RATIO * 100}vw`, maxWidth: `${GUIDE_MAX_SIZE}px`, maxHeight: `${GUIDE_MAX_SIZE}px`,
-          filter: showGreenGuide ? "drop-shadow(0 0 16px rgba(74,222,128,0.7))" : "none",
+          filter: captureQuality === "good" ? "drop-shadow(0 0 16px rgba(74,222,128,0.7))" : "none",
           transition: "filter 0.3s",
         }}>
           <svg viewBox="0 0 300 300" style={{ width: "100%", height: "100%", overflow: "visible" }}>
             <circle cx="150" cy="150" r="145" fill="none"
               stroke={colors.outer} strokeWidth="3"
-              strokeDasharray={showGreenGuide ? "0" : "10 5"} />
+              strokeDasharray={captureQuality === "good" ? "0" : "10 5"} />
             <circle cx="150" cy="150" r="130" fill="none"
               stroke={colors.mid} strokeWidth="2"
-              strokeDasharray={showGreenGuide ? "0" : "6 4"} />
+              strokeDasharray={captureQuality === "good" ? "0" : "6 4"} />
             {/* 画面中央の十字補助線 */}
             <line x1="150" y1="0" x2="150" y2="300" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
             <line x1="0" y1="150" x2="300" y2="150" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
@@ -1460,7 +1475,7 @@ export default function CameraView() {
 
       <div style={{
         position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 20,
-        padding: "24px 24px 48px",
+        padding: "14px 20px calc(env(safe-area-inset-bottom, 0px) + 18px)",
         background: "linear-gradient(to top, rgba(0,0,0,0.7), transparent)",
         display: "flex", flexDirection: "column", alignItems: "center",
         opacity: 1,
@@ -1468,19 +1483,19 @@ export default function CameraView() {
         transition: "opacity 0.3s",
       }}>
         <button onClick={doCapture} style={{
-          width: "100%", maxWidth: "320px", padding: "18px",
+          width: "100%", maxWidth: "280px", padding: "14px",
           background: captureButtonColor, color: "white",
-          borderRadius: "16px", fontSize: "20px", fontWeight: "bold", border: "none",
+          borderRadius: "14px", fontSize: "18px", fontWeight: "bold", border: "none",
           boxShadow: captureButtonShadow,
         }}>
           📸 {captureButtonLabel}
         </button>
         <div style={{
-          marginTop: "10px",
-          maxWidth: "340px",
+          marginTop: "6px",
+          maxWidth: "310px",
           color: "rgba(226,232,240,0.88)",
-          fontSize: "12px",
-          lineHeight: 1.55,
+          fontSize: "11px",
+          lineHeight: 1.45,
           textAlign: "center",
           textShadow: "0 1px 3px black",
         }}>
