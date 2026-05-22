@@ -29,6 +29,11 @@ interface SelectedCameraDebugInfo {
   facingMode: string | null;
 }
 
+interface CenterDebugInfo {
+  x: number | null;
+  y: number | null;
+}
+
 interface CalibrationData {
   cx: number | null;
   cy: number | null;
@@ -84,6 +89,7 @@ const OUTER_WARNING_CONFIDENCE = 0.22;
 const CAPTURE_ENABLE_FRAMES = 6;
 const CAPTURE_DISABLE_FRAMES = 8;
 const DETECTION_SMOOTHING = 0.35;
+const CENTER_JUMP_SMOOTHING = 0.18;
 const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
 const GUIDE_DISPLAY_RATIO = 0.85;
@@ -186,10 +192,13 @@ function blendDetection(
   }
 
   const keep = 1 - DETECTION_SMOOTHING;
+  const centerJump = Math.sqrt((current.centerX - previous.centerX) ** 2 + (current.centerY - previous.centerY) ** 2);
+  const centerSmoothing = centerJump > ANALYSIS_SIZE * 0.055 ? CENTER_JUMP_SMOOTHING : DETECTION_SMOOTHING;
+  const centerKeep = 1 - centerSmoothing;
   const smoothed: DetectionState = {
     ...current,
-    centerX: previous.centerX * keep + current.centerX * DETECTION_SMOOTHING,
-    centerY: previous.centerY * keep + current.centerY * DETECTION_SMOOTHING,
+    centerX: previous.centerX * centerKeep + current.centerX * centerSmoothing,
+    centerY: previous.centerY * centerKeep + current.centerY * centerSmoothing,
     confidence: previous.confidence * keep + current.confidence * DETECTION_SMOOTHING,
     outerRatio: previous.outerRatio * keep + current.outerRatio * DETECTION_SMOOTHING,
     outerWarning: current.outerWarning,
@@ -281,7 +290,7 @@ function analyzeFrame(
   const imageData = ctx.getImageData(0, 0, W, H);
   const data = imageData.data;
   const sampleCount = 96;
-  const centerOffsets = [-20, -12, -6, 0, 6, 12, 20];
+  const centerOffsets = [-24, -16, -8, 0, 8, 16, 24];
   const radiusMin = Math.round(Math.min(W, H) * OUTER_RADIUS_MIN_RATIO);
   const radiusMax = Math.round(Math.min(W, H) * OUTER_RADIUS_MAX_RATIO);
 
@@ -298,6 +307,36 @@ function analyzeFrame(
     };
   };
 
+  const getCenterFeatureScore = (cx: number, cy: number) => {
+    const centerSamples = [
+      getPixel(cx, cy),
+      getPixel(cx - 4, cy),
+      getPixel(cx + 4, cy),
+      getPixel(cx, cy - 4),
+      getPixel(cx, cy + 4),
+    ];
+    const centerLuma = centerSamples.reduce((sum, pixel) => sum + pixel.luma, 0) / centerSamples.length;
+    const ringSamples = Array.from({ length: 24 }, (_, i) => {
+      const angle = (Math.PI * 2 * i) / 24;
+      return getPixel(cx + Math.cos(angle) * 16, cy + Math.sin(angle) * 16);
+    });
+    const ringLuma = ringSamples.reduce((sum, pixel) => sum + pixel.luma, 0) / ringSamples.length;
+    const ringVariance = ringSamples.reduce((sum, pixel) => sum + (pixel.luma - ringLuma) ** 2, 0) / ringSamples.length;
+    const contrastScore = Math.min(Math.abs(centerLuma - ringLuma) / 90, 1);
+    const brightHoleScore = Math.max(0, Math.min((centerLuma - ringLuma) / 70, 1));
+    const circularScore = 1 - Math.min(ringVariance / 2600, 1);
+    const verticalContrast =
+      Math.abs(getPixel(cx, cy - 24).luma - centerLuma) +
+      Math.abs(getPixel(cx, cy + 24).luma - centerLuma);
+    const horizontalContrast =
+      Math.abs(getPixel(cx - 24, cy).luma - centerLuma) +
+      Math.abs(getPixel(cx + 24, cy).luma - centerLuma);
+    const verticalLinePenalty = verticalContrast > horizontalContrast * 1.35 ? 1 : 0;
+    const upwardPenalty = cy < screenCy ? (screenCy - cy) / 32 : 0;
+
+    return contrastScore * 0.07 + brightHoleScore * 0.05 + circularScore * 0.04 - verticalLinePenalty * 0.06 - upwardPenalty * 0.04;
+  };
+
   let best = {
     centerX: screenCx,
     centerY: screenCy,
@@ -311,6 +350,7 @@ function analyzeFrame(
       const candidateX = screenCx + ox;
       const candidateY = screenCy + oy;
       const centerPenalty = Math.sqrt(ox * ox + oy * oy) / (W * 0.18);
+      const centerFeatureScore = getCenterFeatureScore(candidateX, candidateY);
 
       for (let radius = radiusMin; radius <= radiusMax; radius += 4) {
         let edgeHits = 0;
@@ -336,7 +376,7 @@ function analyzeFrame(
 
         const edgeRatio = edgeHits / sampleCount;
         const radiusBonus = (radius - radiusMin) / Math.max(1, radiusMax - radiusMin) * 0.12;
-        const confidence = edgeRatio * 0.75 + (edgeStrength / sampleCount) * 0.25 + radiusBonus - centerPenalty * 0.18;
+        const confidence = edgeRatio * 0.75 + (edgeStrength / sampleCount) * 0.25 + radiusBonus + centerFeatureScore - centerPenalty * 0.2;
 
         if (confidence > best.confidence) {
           best = {
@@ -799,6 +839,7 @@ export default function CameraView() {
   const [calibrationData, setCalibrationData] = useState<CalibrationData | null>(null);
   const [detectionResult, setDetectionResult] = useState<DetectionState>(initialDetection);
   const [showGreenGuide, setShowGreenGuide] = useState(false);
+  const [rawCenter, setRawCenter] = useState<CenterDebugInfo>({ x: null, y: null });
   const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({
     label: null,
     deviceId: null,
@@ -846,6 +887,7 @@ export default function CameraView() {
       const canvas = analysisCanvasRef.current;
       if (video && canvas && video.readyState >= 2) {
         const rawResult = analyzeFrame(video, canvas);
+        setRawCenter({ x: rawResult.centerX, y: rawResult.centerY });
         const smoothedResult = blendDetection(smoothedDetectionRef.current, rawResult);
         const smoothedCenterOffset =
           smoothedResult.centerX === null || smoothedResult.centerY === null
@@ -927,6 +969,7 @@ export default function CameraView() {
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
     detectionFrameRef.current = 0;
+    setRawCenter({ x: null, y: null });
     setShowGreenGuide(false);
     try {
       const videoConstraints = await getPreferredVideoConstraints();
@@ -1075,6 +1118,7 @@ export default function CameraView() {
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
     detectionFrameRef.current = 0;
+    setRawCenter({ x: null, y: null });
     setSelectedCamera({ label: null, deviceId: null, width: null, height: null, facingMode: null });
     setShowGreenGuide(false);
     setDetectionResult(initialDetection);
@@ -1280,6 +1324,10 @@ export default function CameraView() {
         canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)}
         <br />
         stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
+        <br />
+        raw_center_x: {rawCenter.x === null ? "-" : rawCenter.x.toFixed(1)} / raw_center_y: {rawCenter.y === null ? "-" : rawCenter.y.toFixed(1)}
+        <br />
+        smoothed_center_x: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)} / smoothed_center_y: {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
         <br />
         confidence: {detectionResult.confidence.toFixed(2)} / isAligned: {String(detectionResult.isAligned)}
         <br />
