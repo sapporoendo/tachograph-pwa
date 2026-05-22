@@ -75,7 +75,7 @@ const ANALYSIS_SIZE = 320;
 const TACHOGRAPH_CHART_DIAMETER_CM = 12.2;
 const MIN_CENTER_CONFIDENCE = 0.35;
 const CENTER_ALIGNMENT_TOLERANCE_RATIO = 0.075;
-const OUTER_RATIO_MIN = 0.62;
+const OUTER_RATIO_MIN = 0.32;
 const OUTER_RATIO_MAX = 1.08;
 const OUTER_RADIUS_MIN_RATIO = 0.26;
 const OUTER_RADIUS_MAX_RATIO = 0.48;
@@ -1283,7 +1283,9 @@ export default function CameraView() {
         <br />
         confidence: {detectionResult.confidence.toFixed(2)} / isAligned: {String(detectionResult.isAligned)}
         <br />
-        outerRatio: {detectionResult.outerRatio.toFixed(2)} / outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)}
+        outerRatio: {detectionResult.outerRatio.toFixed(2)} / min: {OUTER_RATIO_MIN.toFixed(2)}
+        <br />
+        outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)}
         <br />
         rawOuterRadius: {rawOuterRadius.toFixed(1)} / display: {showGreenGuide ? "green" : detectionResult.status === "too_far" ? "yellow" : detectionResult.status === "too_close" ? "red" : "white"}
         <br />
