@@ -860,6 +860,7 @@ export default function CameraView() {
   const [calibrationData, setCalibrationData] = useState<CalibrationData | null>(null);
   const [detectionResult, setDetectionResult] = useState<DetectionState>(initialDetection);
   const [showGreenGuide, setShowGreenGuide] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   const [rawCenter, setRawCenter] = useState<CenterDebugInfo>({ x: null, y: null });
   const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({
     label: null,
@@ -1162,6 +1163,7 @@ export default function CameraView() {
     detectionFrameRef.current = 0;
     setRawCenter({ x: null, y: null });
     setSelectedCamera({ label: null, deviceId: null, width: null, height: null, facingMode: null });
+    setShowDebug(false);
     setShowGreenGuide(false);
     setDetectionResult(initialDetection);
     setState("idle");
@@ -1228,28 +1230,20 @@ export default function CameraView() {
             <p style={{ color: "#e2e8f0", fontSize: "12px", margin: 0, wordBreak: "break-all", fontFamily: "monospace" }}>
               {calibrationData.filename}
             </p>
-            <button
-              onClick={() => navigator.clipboard?.writeText(calibrationData.filename)}
-              style={{
-                marginTop: "10px", padding: "8px 12px", background: "#334155", color: "white",
-                border: "none", borderRadius: "10px", fontSize: "13px",
-              }}
-            >
-              保存名をコピー
-            </button>
-          </div>
-        )}
-        {calibrationData && (
-          <div style={{
-            background: "#111827", borderRadius: "12px", padding: "12px 16px",
-            maxWidth: "400px", width: "100%", flexShrink: 0,
-            border: "1px solid rgba(148,163,184,0.24)",
-          }}>
-            <p style={{ color: "#94a3b8", fontSize: "11px", margin: "0 0 6px" }}>JSON保存名</p>
+            <p style={{ color: "#94a3b8", fontSize: "11px", margin: "12px 0 6px" }}>JSON名</p>
             <p style={{ color: "#e2e8f0", fontSize: "12px", margin: 0, wordBreak: "break-all", fontFamily: "monospace" }}>
               {calibrationData.json_filename}
             </p>
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button
+                onClick={() => navigator.clipboard?.writeText(calibrationData.filename)}
+                style={{
+                  flex: 1, padding: "8px 10px", background: "#334155", color: "white",
+                  border: "none", borderRadius: "10px", fontSize: "13px",
+                }}
+              >
+                保存名コピー
+              </button>
               <button
                 onClick={() => navigator.clipboard?.writeText(JSON.stringify(calibrationData, null, 2))}
                 style={{
@@ -1269,15 +1263,6 @@ export default function CameraView() {
                 JSON保存
               </button>
             </div>
-          </div>
-        )}
-        {calibrationData && (
-          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "12px 16px",
-            maxWidth: "400px", width: "100%", fontFamily: "monospace", flexShrink: 0 }}>
-            <p style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "6px" }}>calibration.json</p>
-            <pre style={{ color: "#86efac", fontSize: "12px", margin: 0, whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(calibrationData, null, 2)}
-            </pre>
           </div>
         )}
         {saved && (
@@ -1307,20 +1292,6 @@ export default function CameraView() {
             </p>
           </div>
         )}
-        <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
-          <button onClick={retake} style={{
-            flex: 1, padding: "14px", background: "#334155", color: "white",
-            borderRadius: "12px", border: "none", fontSize: "16px"
-          }}>撮り直し</button>
-          <button onClick={async () => {
-            const filename = calibrationData?.filename ?? createCaptureFilename(null, null, 0);
-            await saveJpeg(capturedImage, filename);
-            setSaved(true);
-          }} style={{
-            flex: 1, padding: "14px", background: "#16a34a", color: "white",
-            borderRadius: "12px", border: "none", fontSize: "16px"
-          }}>📷 写真に保存</button>
-        </div>
         {calibrationData && (
           <button
             onClick={async () => {
@@ -1335,6 +1306,20 @@ export default function CameraView() {
             解析用に共有
           </button>
         )}
+        <div style={{ display: "flex", gap: "12px", width: "100%", maxWidth: "400px", flexShrink: 0 }}>
+          <button onClick={retake} style={{
+            flex: 1, padding: "14px", background: "#334155", color: "white",
+            borderRadius: "12px", border: "none", fontSize: "16px"
+          }}>撮り直す</button>
+          <button onClick={async () => {
+            const filename = calibrationData?.filename ?? createCaptureFilename(null, null, 0);
+            await saveJpeg(capturedImage, filename);
+            setSaved(true);
+          }} style={{
+            flex: 1, padding: "14px", background: "#16a34a", color: "white",
+            borderRadius: "12px", border: "none", fontSize: "16px"
+          }}>写真に保存</button>
+        </div>
       </div>
     );
   }
@@ -1347,9 +1332,27 @@ export default function CameraView() {
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
       />
 
-      <div style={{
+      <button
+        onClick={() => setShowDebug((value) => !value)}
+        style={{
+          position: "absolute",
+          top: "calc(env(safe-area-inset-top, 0px) + 8px)",
+          right: "10px",
+          zIndex: 45,
+          padding: "8px 10px",
+          background: "rgba(0,0,0,0.58)",
+          color: "white",
+          border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: "10px",
+          fontSize: "12px",
+        }}
+      >
+        {showDebug ? "詳細を閉じる" : "詳細"}
+      </button>
+
+      {showDebug && <div style={{
         position: "absolute",
-        top: "calc(env(safe-area-inset-top, 0px) + 8px)",
+        top: "calc(env(safe-area-inset-top, 0px) + 46px)",
         left: "8px",
         right: "8px",
         zIndex: 40,
@@ -1395,20 +1398,17 @@ export default function CameraView() {
         selected deviceId: {selectedCamera.deviceId ?? "-"}
         <br />
         track: {selectedCamera.width ?? "-"}x{selectedCamera.height ?? "-"} / facingMode: {selectedCamera.facingMode ?? "-"}
-      </div>
+      </div>}
 
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10, pointerEvents: "none" }}>
         <div style={{
           marginBottom: "12px", padding: "8px 20px", borderRadius: "999px",
           background: "rgba(0,0,0,0.55)",
-          color: isOk ? "#4ade80" : detectionResult.status === "too_close" ? "#f87171" : detectionResult.status === "too_far" ? "#facc15" : "white",
+          color: "white",
           fontSize: "15px", fontWeight: "bold", textShadow: "0 1px 4px black",
           transition: "color 0.3s",
         }}>
-          {detectionResult.status === "too_close" && "⬆️ "}
-          {detectionResult.status === "too_far" && "⬇️ "}
-          {isOk && "✅ "}
-          {detectionResult.message}
+          中心を十字に合わせて撮影してください
         </div>
         <div style={{
           marginBottom: "10px", padding: "7px 14px", borderRadius: "12px",
@@ -1417,7 +1417,7 @@ export default function CameraView() {
           fontSize: "12px", lineHeight: 1.5, textAlign: "center",
           textShadow: "0 1px 3px black",
         }}>
-          12時を上に / 中心を十字に / 外周を円形ガイドに
+          12時を上に / 外周を円に合わせる
         </div>
 
         <div style={{
@@ -1432,9 +1432,6 @@ export default function CameraView() {
             <circle cx="150" cy="150" r="130" fill="none"
               stroke={colors.mid} strokeWidth="2"
               strokeDasharray={showGreenGuide ? "0" : "6 4"} />
-            <circle cx="150" cy="150" r="106" fill="none"
-              stroke={colors.inner} strokeWidth="2"
-              strokeDasharray={showGreenGuide ? "0" : "5 4"} />
             {/* 画面中央の十字補助線 */}
             <line x1="150" y1="0" x2="150" y2="300" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
             <line x1="0" y1="150" x2="300" y2="150" stroke="rgba(255,255,255,0.62)" strokeWidth="1.5" strokeDasharray="7,7" />
@@ -1453,11 +1450,6 @@ export default function CameraView() {
             <line x1="144" y1="5" x2="156" y2="5" stroke={colors.outer} strokeWidth="3" strokeLinecap="round" />
             <text x="150" y="-4" textAnchor="middle" fill={colors.outer} fontSize="11" fontWeight="bold" fontFamily="sans-serif">12時</text>
 
-            {!isOk && <>
-              <text x="152" y="6" fill="rgba(255,255,255,0.8)" fontSize="10" fontFamily="sans-serif">チャート紙の縁</text>
-              <text x="152" y="21" fill="rgba(255,100,100,0.8)" fontSize="10" fontFamily="sans-serif">120km/h付近</text>
-              <text x="152" y="36" fill="rgba(96,165,250,0.8)" fontSize="10" fontFamily="sans-serif">20km/h付近</text>
-            </>}
           </svg>
         </div>
 
