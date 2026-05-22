@@ -21,6 +21,11 @@ interface DetectionState extends TachographDetectionResult {
   status: DistanceStatus;
 }
 
+interface SelectedCameraDebugInfo {
+  label: string | null;
+  deviceId: string | null;
+}
+
 interface CalibrationData {
   cx: number | null;
   cy: number | null;
@@ -93,6 +98,14 @@ const initialDetection: DetectionState = {
   message: "カメラを向けてください",
   status: "unknown",
 };
+
+function getCanCaptureBlockReason(detection: DetectionState, stableOkFrames: number): string {
+  if (detection.canCapture) return "none";
+  if (detection.centerX === null || detection.centerY === null || detection.confidence < MIN_CENTER_CONFIDENCE) return "confidence low";
+  if (!detection.isAligned) return "center not aligned";
+  if (stableOkFrames < CAPTURE_ENABLE_FRAMES) return "waiting stable frames";
+  return "waiting stable frames";
+}
 
 function formatTimestamp(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -772,6 +785,7 @@ export default function CameraView() {
   const [calibrationData, setCalibrationData] = useState<CalibrationData | null>(null);
   const [detectionResult, setDetectionResult] = useState<DetectionState>(initialDetection);
   const [showGreenGuide, setShowGreenGuide] = useState(false);
+  const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({ label: null, deviceId: null });
   // チュートリアル：初回のみ表示
   const [showTutorial, setShowTutorial] = useState(false);
 
@@ -896,6 +910,11 @@ export default function CameraView() {
         });
       }
       streamRef.current = stream;
+      const videoTrack = stream.getVideoTracks()[0] ?? null;
+      setSelectedCamera({
+        label: videoTrack?.label || null,
+        deviceId: videoTrack?.getSettings().deviceId || null,
+      });
       smoothedDetectionRef.current = null;
       stableCanCaptureRef.current = false;
       captureOkFramesRef.current = 0;
@@ -1014,6 +1033,7 @@ export default function CameraView() {
     captureNgFramesRef.current = 0;
     guideGreenStartedAtRef.current = 0;
     guideGreenNgStartedAtRef.current = null;
+    setSelectedCamera({ label: null, deviceId: null });
     setShowGreenGuide(false);
     setDetectionResult(initialDetection);
     setState("idle");
@@ -1037,6 +1057,7 @@ export default function CameraView() {
     previewMapping
   );
   const plannedFilename = createCaptureFilename(previewCenter.x, previewCenter.y, previewOuterRadius);
+  const canCaptureBlockReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
 
   if (state === "idle") {
     return (
@@ -1288,11 +1309,21 @@ export default function CameraView() {
           fontFamily: "monospace", wordBreak: "break-all",
           background: "rgba(0,0,0,0.36)", borderRadius: "10px", padding: "8px 10px",
         }}>
-          center: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)}, {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
+          canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)}
           <br />
-          confidence: {detectionResult.confidence.toFixed(2)} / outerRatio: {detectionResult.outerRatio.toFixed(2)} / outerWarning: {String(detectionResult.outerWarning)}
+          stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
           <br />
-          canCapture: {String(detectionResult.canCapture)}
+          centerX: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)} / centerY: {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
+          <br />
+          confidence: {detectionResult.confidence.toFixed(2)} / outerRatio: {detectionResult.outerRatio.toFixed(2)}
+          <br />
+          outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)} / isAligned: {String(detectionResult.isAligned)}
+          <br />
+          selected camera label: {selectedCamera.label ?? "-"}
+          <br />
+          selected deviceId: {selectedCamera.deviceId ?? "-"}
+          <br />
+          false reason: {canCaptureBlockReason}
           <br />
           message: {detectionResult.message}
           <br />
