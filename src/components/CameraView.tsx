@@ -68,6 +68,9 @@ interface CalibrationData {
   detection: TachographDetectionResult;
   filename: string;
   json_filename: string;
+  filename_base: string;
+  captured_at_local: string;
+  captured_at_iso: string;
 }
 
 interface AnalysisMapping {
@@ -173,10 +176,22 @@ function formatTimestamp(date: Date): string {
   ].join("");
 }
 
-function createCaptureFilename(cx: number | null, cy: number | null, r: number): string {
+function formatLocalCapturedAt(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+  ].join(" ");
+}
+
+function createCaptureFilenameBase(cx: number | null, cy: number | null, r: number, capturedAt: Date): string {
   const safeCx = cx === null ? "unknown" : Math.round(cx).toString();
   const safeCy = cy === null ? "unknown" : Math.round(cy).toString();
-  return `tacho_cx${safeCx}_cy${safeCy}_r${Math.round(r)}.jpg`;
+  return `tacho_cx${safeCx}_cy${safeCy}_r${Math.round(r)}_${formatTimestamp(capturedAt)}`;
+}
+
+function createCaptureFilename(cx: number | null, cy: number | null, r: number, capturedAt = new Date()): string {
+  return `${createCaptureFilenameBase(cx, cy, r, capturedAt)}.jpg`;
 }
 
 function getAnalysisMapping(videoWidth: number, videoHeight: number): AnalysisMapping {
@@ -1091,8 +1106,10 @@ export default function CameraView() {
     const mappedCenter = mapAnalysisPointToSavedJpeg(detectionResult.centerX, detectionResult.centerY, analysisMapping);
     const rawOuterRadius = detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE);
     const mappedOuterRadius = mapAnalysisRadiusToSavedJpeg(rawOuterRadius, analysisMapping);
-    const filename = createCaptureFilename(mappedCenter.x, mappedCenter.y, mappedOuterRadius);
+    const filenameBase = createCaptureFilenameBase(mappedCenter.x, mappedCenter.y, mappedOuterRadius, capturedAt);
+    const filename = `${filenameBase}.jpg`;
     const jsonFilename = createJsonFilename(filename);
+    const capturedAtIso = capturedAt.toISOString();
     const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
     const trackSettings = videoTrack?.getSettings();
     const falseReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
@@ -1123,14 +1140,17 @@ export default function CameraView() {
       is_aligned: detectionResult.isAligned,
       message: detectionResult.message,
       chart_diameter_cm: TACHOGRAPH_CHART_DIAMETER_CM,
-      timestamp: capturedAt.toISOString(),
+      timestamp: capturedAtIso,
       user_agent: navigator.userAgent,
       selected_camera_label: videoTrack?.label || null,
       selected_camera_device_id: trackSettings?.deviceId || null,
-      captured_at: capturedAt.toISOString(),
+      captured_at: capturedAtIso,
       detection: detectionResult,
       filename,
       json_filename: jsonFilename,
+      filename_base: filenameBase,
+      captured_at_local: formatLocalCapturedAt(capturedAt),
+      captured_at_iso: capturedAtIso,
     };
 
     // canvasで撮影
