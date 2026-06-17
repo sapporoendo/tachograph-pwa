@@ -1211,6 +1211,18 @@ export default function CameraView() {
   const markerX = detectionResult.centerX === null ? null : (detectionResult.centerX / ANALYSIS_SIZE) * 300;
   const markerY = detectionResult.centerY === null ? null : (detectionResult.centerY / ANALYSIS_SIZE) * 300;
   const rawOuterRadius = detectionResult.outerRatio * ((145 / 300) * ANALYSIS_SIZE);
+  const centerOffset =
+    detectionResult.centerX === null || detectionResult.centerY === null
+      ? null
+      : Math.sqrt((detectionResult.centerX - ANALYSIS_SIZE / 2) ** 2 + (detectionResult.centerY - ANALYSIS_SIZE / 2) ** 2);
+  const goodBlockReasons = [
+    detectionResult.confidence < QUALITY_GOOD_MIN_CONFIDENCE ? "confidence < QUALITY_GOOD_MIN_CONFIDENCE" : null,
+    detectionResult.outerRatio < QUALITY_GOOD_OUTER_RATIO_MIN ? "outerRatio < QUALITY_GOOD_OUTER_RATIO_MIN" : null,
+    detectionResult.outerRatio > OUTER_RATIO_MAX ? "outerRatio > OUTER_RATIO_MAX" : null,
+    centerOffset === null || centerOffset > ANALYSIS_SIZE * QUALITY_GOOD_ALIGNMENT_RATIO
+      ? "centerOffset > ANALYSIS_SIZE * QUALITY_GOOD_ALIGNMENT_RATIO"
+      : null,
+  ].filter(Boolean).join(", ");
   const captureHoldRemainingMs = Math.max(0, Math.round(captureEnabledAtRef.current + CAPTURE_MIN_HOLD_MS - Date.now()));
   const canCaptureBlockReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
   const showGreenGuideBlockReason = getShowGreenGuideBlockReason(detectionResult, captureOkFramesRef.current);
@@ -1421,6 +1433,10 @@ export default function CameraView() {
         confidence: {detectionResult.confidence.toFixed(2)} / isAligned: {String(detectionResult.isAligned)}
         <br />
         outerRatio: {detectionResult.outerRatio.toFixed(2)} / min: {OUTER_RATIO_MIN.toFixed(2)}
+        <br />
+        centerOffset: {centerOffset === null ? "-" : centerOffset.toFixed(1)} / goodMax: {(ANALYSIS_SIZE * QUALITY_GOOD_ALIGNMENT_RATIO).toFixed(1)}
+        <br />
+        good reason: {goodBlockReasons || "none"}
         <br />
         goodMin confidence: {QUALITY_GOOD_MIN_CONFIDENCE.toFixed(2)} / outerRatio: {QUALITY_GOOD_OUTER_RATIO_MIN.toFixed(2)}
         <br />
