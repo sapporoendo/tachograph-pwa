@@ -105,8 +105,8 @@ const DETECTION_SMOOTHING = 0.35;
 const CENTER_JUMP_SMOOTHING = 0.18;
 const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
-const GUIDE_DISPLAY_RATIO = 0.78;
-const GUIDE_MAX_SIZE = 310;
+const GUIDE_DISPLAY_RATIO = 0.85;
+const GUIDE_MAX_SIZE = 340;
 
 const initialDetection: DetectionState = {
   centerX: null,
