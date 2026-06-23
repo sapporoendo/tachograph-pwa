@@ -64,6 +64,13 @@ interface CameraCaptureMetadata {
   viewportHeight: number;
 }
 
+interface ZoomApplyState {
+  attempted: boolean;
+  succeeded: boolean;
+  error: string | null;
+  appliedZoom: number | null;
+}
+
 interface CalibrationData {
   cx: number | null;
   cy: number | null;
@@ -113,6 +120,9 @@ interface CalibrationData {
   viewportHeight: number;
   requestedZoom: RequestedZoom;
   captureMethod: string;
+  zoomApplyAttempted: boolean;
+  zoomApplySucceeded: boolean;
+  zoomApplyError: string | null;
 }
 
 interface AnalysisMapping {
@@ -149,6 +159,13 @@ const GUIDE_GREEN_MIN_HOLD_MS = 1000;
 const GUIDE_GREEN_DISABLE_DELAY_MS = 800;
 const GUIDE_DISPLAY_RATIO = 0.85;
 const GUIDE_MAX_SIZE = 340;
+
+const initialZoomApplyState: ZoomApplyState = {
+  attempted: false,
+  succeeded: false,
+  error: null,
+  appliedZoom: null,
+};
 
 const initialDetection: DetectionState = {
   centerX: null,
@@ -243,6 +260,21 @@ function getCaptureMethod(userAgent: string, requestedZoom: RequestedZoom): stri
   return "unknown";
 }
 
+function clampZoomToCapabilities(requestedZoom: RequestedZoom, metadata: CameraCaptureMetadata): number {
+  const min = metadata.zoomMin ?? requestedZoom;
+  const max = metadata.zoomMax ?? requestedZoom;
+  const lower = Math.min(min, max);
+  const upper = Math.max(min, max);
+  let zoom = Math.max(lower, Math.min(upper, requestedZoom));
+
+  if (metadata.zoomStep && metadata.zoomStep > 0) {
+    zoom = lower + Math.round((zoom - lower) / metadata.zoomStep) * metadata.zoomStep;
+    zoom = Math.max(lower, Math.min(upper, zoom));
+  }
+
+  return Number(zoom.toFixed(6));
+}
+
 function getNumberSetting(settings: MediaTrackSettings | null, key: string): number | null {
   if (!settings) return null;
   const value = (settings as Record<string, unknown>)[key];
@@ -293,9 +325,9 @@ function getCaptureMetadata(videoTrack: MediaStreamTrack | null): CameraCaptureM
       zoom: actualZoom,
     },
     zoomSupported: Boolean(zoomCapability),
-    zoomMin: typeof zoomCapability?.min === "number" ? zoomCapability.min : null,
-    zoomMax: typeof zoomCapability?.max === "number" ? zoomCapability.max : null,
-    zoomStep: typeof zoomCapability?.step === "number" ? zoomCapability.step : null,
+    zoomMin: typeof zoomCapability?.min === "number" && Number.isFinite(zoomCapability.min) ? zoomCapability.min : null,
+    zoomMax: typeof zoomCapability?.max === "number" && Number.isFinite(zoomCapability.max) ? zoomCapability.max : null,
+    zoomStep: typeof zoomCapability?.step === "number" && Number.isFinite(zoomCapability.step) ? zoomCapability.step : null,
     actualZoom,
     devicePixelRatio: window.devicePixelRatio || 1,
     screenWidth: typeof window.screen?.width === "number" ? window.screen.width : null,
@@ -1004,6 +1036,7 @@ export default function CameraView() {
   const [rawCenter, setRawCenter] = useState<CenterDebugInfo>({ x: null, y: null });
   const [requestedZoom, setRequestedZoom] = useState<RequestedZoom>(2);
   const [cameraMetadata, setCameraMetadata] = useState<CameraCaptureMetadata | null>(null);
+  const [zoomApplyState, setZoomApplyState] = useState<ZoomApplyState>(initialZoomApplyState);
   const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({
     label: null,
     deviceId: null,
@@ -1148,6 +1181,7 @@ export default function CameraView() {
     detectionFrameRef.current = 0;
     setRawCenter({ x: null, y: null });
     setShowGreenGuide(false);
+    setZoomApplyState(initialZoomApplyState);
     try {
       const videoConstraints = await getPreferredVideoConstraints();
       let stream: MediaStream;
@@ -1201,6 +1235,66 @@ export default function CameraView() {
       if (state !== "preview") stopAnalysisLoop();
     };
   }, [state, startAnalysisLoop, stopAnalysisLoop]);
+
+  useEffect(() => {
+    if (state !== "preview") return;
+
+    const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
+    const currentMetadata = getCaptureMetadata(videoTrack);
+    setCameraMetadata(currentMetadata);
+
+    if (!videoTrack || !currentMetadata.zoomSupported) {
+      setZoomApplyState({
+        attempted: false,
+        succeeded: false,
+        error: "zoom unsupported",
+        appliedZoom: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const targetZoom = clampZoomToCapabilities(requestedZoom, currentMetadata);
+
+    const applyZoom = async () => {
+      setZoomApplyState({
+        attempted: true,
+        succeeded: false,
+        error: null,
+        appliedZoom: null,
+      });
+
+      try {
+        await videoTrack.applyConstraints({
+          advanced: [{ zoom: targetZoom } as MediaTrackConstraintSet & { zoom: number }],
+        });
+        if (cancelled) return;
+        const nextMetadata = getCaptureMetadata(videoTrack);
+        setCameraMetadata(nextMetadata);
+        setZoomApplyState({
+          attempted: true,
+          succeeded: true,
+          error: null,
+          appliedZoom: nextMetadata.actualZoom ?? targetZoom,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setCameraMetadata(getCaptureMetadata(videoTrack));
+        setZoomApplyState({
+          attempted: true,
+          succeeded: false,
+          error: err instanceof Error ? err.message : "zoom apply failed",
+          appliedZoom: null,
+        });
+      }
+    };
+
+    void applyZoom();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedZoom, state]);
 
   const doCapture = useCallback(() => {
     const video = videoRef.current;
@@ -1270,6 +1364,9 @@ export default function CameraView() {
       ...captureMetadata,
       requestedZoom,
       captureMethod,
+      zoomApplyAttempted: zoomApplyState.attempted,
+      zoomApplySucceeded: zoomApplyState.succeeded,
+      zoomApplyError: zoomApplyState.error,
     };
 
     // canvasで撮影
@@ -1300,7 +1397,7 @@ export default function CameraView() {
       setState("captured");
       setSaved(false);
     }, "image/jpeg", 0.95);
-  }, [detectionResult, requestedZoom, showGreenGuide, stopAnalysisLoop]);
+  }, [detectionResult, requestedZoom, showGreenGuide, stopAnalysisLoop, zoomApplyState]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
@@ -1317,6 +1414,7 @@ export default function CameraView() {
     setRawCenter({ x: null, y: null });
     setSelectedCamera({ label: null, deviceId: null, width: null, height: null, facingMode: null });
     setCameraMetadata(null);
+    setZoomApplyState(initialZoomApplyState);
     setShowDebug(false);
     setShowGreenGuide(false);
     setDetectionResult(initialDetection);
@@ -1359,6 +1457,18 @@ export default function CameraView() {
     ? "-"
     : cameraMetadata.actualZoom.toFixed(1);
   const zoomSupportLabel = cameraMetadata ? (cameraMetadata.zoomSupported ? "対応" : "非対応") : "-";
+  const zoomAppliedValue = zoomApplyState.appliedZoom ?? cameraMetadata?.actualZoom ?? null;
+  const zoomApplyLabel = !cameraMetadata
+    ? "-"
+    : !cameraMetadata.zoomSupported
+      ? "非対応"
+      : zoomApplyState.succeeded
+        ? `適用済み ${zoomAppliedValue === null ? requestedZoom.toFixed(1) : zoomAppliedValue.toFixed(1)}x`
+        : zoomApplyState.attempted && zoomApplyState.error
+          ? "適用失敗"
+          : zoomApplyState.attempted
+            ? "適用中"
+            : "未適用";
 
   if (state === "idle") {
     return (
@@ -1686,8 +1796,11 @@ export default function CameraView() {
             <span>現在の実倍率: {actualZoomLabel}</span>
             <span>ズーム制御: {zoomSupportLabel}</span>
           </div>
+          <div style={{ marginTop: "5px", color: zoomApplyState.error ? "#fecaca" : "rgba(203,213,225,0.92)" }}>
+            実ズーム: {zoomApplyLabel}
+          </div>
           <div style={{ marginTop: "7px", color: "rgba(203,213,225,0.78)", fontSize: "11px", lineHeight: 1.4 }}>
-            推奨: 2x（少し離れて撮影） / 実ズームではなく条件ラベルとして記録します
+            試験機能です。非対応や失敗時も撮影できます
           </div>
         </div>
         <button onClick={doCapture} style={{
