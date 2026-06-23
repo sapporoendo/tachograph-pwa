@@ -1002,7 +1002,7 @@ export default function CameraView() {
   const [showGreenGuide, setShowGreenGuide] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [rawCenter, setRawCenter] = useState<CenterDebugInfo>({ x: null, y: null });
-  const [requestedZoom, setRequestedZoom] = useState<RequestedZoom>(1);
+  const [requestedZoom, setRequestedZoom] = useState<RequestedZoom>(2);
   const [cameraMetadata, setCameraMetadata] = useState<CameraCaptureMetadata | null>(null);
   const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({
     label: null,
@@ -1685,6 +1685,9 @@ export default function CameraView() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "8px", color: "rgba(203,213,225,0.92)" }}>
             <span>現在の実倍率: {actualZoomLabel}</span>
             <span>ズーム制御: {zoomSupportLabel}</span>
+          </div>
+          <div style={{ marginTop: "7px", color: "rgba(203,213,225,0.78)", fontSize: "11px", lineHeight: 1.4 }}>
+            推奨: 2x（少し離れて撮影） / 実ズームではなく条件ラベルとして記録します
           </div>
         </div>
         <button onClick={doCapture} style={{
