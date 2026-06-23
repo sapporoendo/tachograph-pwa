@@ -5,6 +5,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 type CaptureState = "idle" | "preview" | "captured";
 type DistanceStatus = "too_close" | "ok" | "too_far" | "unknown";
 type CaptureQuality = "good" | "warning" | "manual";
+type RequestedZoom = 1 | 2;
 
 interface TachographDetectionResult {
   centerX: number | null;
@@ -33,6 +34,34 @@ interface SelectedCameraDebugInfo {
 interface CenterDebugInfo {
   x: number | null;
   y: number | null;
+}
+
+interface CameraSettingsMetadata {
+  width: number | null;
+  height: number | null;
+  aspectRatio: number | null;
+  facingMode: string | null;
+  zoom: number | null;
+}
+
+interface ZoomCapabilityRange {
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+interface CameraCaptureMetadata {
+  cameraSettings: CameraSettingsMetadata;
+  zoomSupported: boolean;
+  zoomMin: number | null;
+  zoomMax: number | null;
+  zoomStep: number | null;
+  actualZoom: number | null;
+  devicePixelRatio: number;
+  screenWidth: number | null;
+  screenHeight: number | null;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 interface CalibrationData {
@@ -71,6 +100,19 @@ interface CalibrationData {
   filename_base: string;
   captured_at_local: string;
   captured_at_iso: string;
+  cameraSettings: CameraSettingsMetadata;
+  zoomSupported: boolean;
+  zoomMin: number | null;
+  zoomMax: number | null;
+  zoomStep: number | null;
+  actualZoom: number | null;
+  devicePixelRatio: number;
+  screenWidth: number | null;
+  screenHeight: number | null;
+  viewportWidth: number;
+  viewportHeight: number;
+  requestedZoom: RequestedZoom;
+  captureMethod: string;
 }
 
 interface AnalysisMapping {
@@ -192,6 +234,75 @@ function createCaptureFilenameBase(cx: number | null, cy: number | null, r: numb
 
 function createCaptureFilename(cx: number | null, cy: number | null, r: number, capturedAt = new Date()): string {
   return `${createCaptureFilenameBase(cx, cy, r, capturedAt)}.jpg`;
+}
+
+function getCaptureMethod(userAgent: string, requestedZoom: RequestedZoom): string {
+  const normalized = userAgent.toLowerCase();
+  if (normalized.includes("iphone")) return `iphone_${requestedZoom}x`;
+  if (normalized.includes("android")) return `android_${requestedZoom}x`;
+  return "unknown";
+}
+
+function getNumberSetting(settings: MediaTrackSettings | null, key: string): number | null {
+  if (!settings) return null;
+  const value = (settings as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getStringSetting(settings: MediaTrackSettings | null, key: string): string | null {
+  if (!settings) return null;
+  const value = (settings as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
+
+function getTrackSettings(videoTrack: MediaStreamTrack | null): MediaTrackSettings | null {
+  try {
+    return videoTrack?.getSettings?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function getZoomCapability(capabilities: MediaTrackCapabilities | null): ZoomCapabilityRange | null {
+  if (!capabilities) return null;
+  const zoom = (capabilities as Record<string, unknown>).zoom;
+  if (!zoom || typeof zoom !== "object") return null;
+  return zoom as ZoomCapabilityRange;
+}
+
+function getCaptureMetadata(videoTrack: MediaStreamTrack | null): CameraCaptureMetadata {
+  let trackCapabilities: MediaTrackCapabilities | null = null;
+
+  const trackSettings = getTrackSettings(videoTrack);
+
+  try {
+    trackCapabilities = videoTrack?.getCapabilities?.() ?? null;
+  } catch {
+    trackCapabilities = null;
+  }
+
+  const zoomCapability = getZoomCapability(trackCapabilities);
+  const actualZoom = getNumberSetting(trackSettings, "zoom");
+
+  return {
+    cameraSettings: {
+      width: getNumberSetting(trackSettings, "width"),
+      height: getNumberSetting(trackSettings, "height"),
+      aspectRatio: getNumberSetting(trackSettings, "aspectRatio"),
+      facingMode: getStringSetting(trackSettings, "facingMode"),
+      zoom: actualZoom,
+    },
+    zoomSupported: Boolean(zoomCapability),
+    zoomMin: typeof zoomCapability?.min === "number" ? zoomCapability.min : null,
+    zoomMax: typeof zoomCapability?.max === "number" ? zoomCapability.max : null,
+    zoomStep: typeof zoomCapability?.step === "number" ? zoomCapability.step : null,
+    actualZoom,
+    devicePixelRatio: window.devicePixelRatio || 1,
+    screenWidth: typeof window.screen?.width === "number" ? window.screen.width : null,
+    screenHeight: typeof window.screen?.height === "number" ? window.screen.height : null,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  };
 }
 
 function getAnalysisMapping(videoWidth: number, videoHeight: number): AnalysisMapping {
@@ -891,6 +1002,8 @@ export default function CameraView() {
   const [showGreenGuide, setShowGreenGuide] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [rawCenter, setRawCenter] = useState<CenterDebugInfo>({ x: null, y: null });
+  const [requestedZoom, setRequestedZoom] = useState<RequestedZoom>(1);
+  const [cameraMetadata, setCameraMetadata] = useState<CameraCaptureMetadata | null>(null);
   const [selectedCamera, setSelectedCamera] = useState<SelectedCameraDebugInfo>({
     label: null,
     deviceId: null,
@@ -1001,7 +1114,7 @@ export default function CameraView() {
         smoothedDetectionRef.current = finalResult;
         detectionFrameRef.current++;
         const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
-        const trackSettings = videoTrack?.getSettings();
+        const trackSettings = getTrackSettings(videoTrack);
         setSelectedCamera({
           label: videoTrack?.label || null,
           deviceId: trackSettings?.deviceId || null,
@@ -1055,7 +1168,8 @@ export default function CameraView() {
       }
       streamRef.current = stream;
       const videoTrack = stream.getVideoTracks()[0] ?? null;
-      const trackSettings = videoTrack?.getSettings();
+      const trackSettings = getTrackSettings(videoTrack);
+      setCameraMetadata(getCaptureMetadata(videoTrack));
       setSelectedCamera({
         label: videoTrack?.label || null,
         deviceId: trackSettings?.deviceId || null,
@@ -1111,11 +1225,13 @@ export default function CameraView() {
     const jsonFilename = createJsonFilename(filename);
     const capturedAtIso = capturedAt.toISOString();
     const videoTrack = streamRef.current?.getVideoTracks()[0] ?? null;
-    const trackSettings = videoTrack?.getSettings();
+    const trackSettings = getTrackSettings(videoTrack);
+    const captureMetadata = getCaptureMetadata(videoTrack);
     const falseReason = getCanCaptureBlockReason(detectionResult, captureOkFramesRef.current);
     const captureQuality = getCaptureQuality(detectionResult);
+    const captureMethod = getCaptureMethod(navigator.userAgent, requestedZoom);
 
-    const calibration = {
+    const calibration: CalibrationData = {
       cx: mappedCenter.x === null ? null : Math.round(mappedCenter.x),
       cy: mappedCenter.y === null ? null : Math.round(mappedCenter.y),
       r: Math.round(mappedOuterRadius),
@@ -1151,6 +1267,9 @@ export default function CameraView() {
       filename_base: filenameBase,
       captured_at_local: formatLocalCapturedAt(capturedAt),
       captured_at_iso: capturedAtIso,
+      ...captureMetadata,
+      requestedZoom,
+      captureMethod,
     };
 
     // canvasで撮影
@@ -1181,7 +1300,7 @@ export default function CameraView() {
       setState("captured");
       setSaved(false);
     }, "image/jpeg", 0.95);
-  }, [detectionResult, showGreenGuide, stopAnalysisLoop]);
+  }, [detectionResult, requestedZoom, showGreenGuide, stopAnalysisLoop]);
 
   const retake = useCallback(() => {
     setCapturedImage(null);
@@ -1197,6 +1316,7 @@ export default function CameraView() {
     detectionFrameRef.current = 0;
     setRawCenter({ x: null, y: null });
     setSelectedCamera({ label: null, deviceId: null, width: null, height: null, facingMode: null });
+    setCameraMetadata(null);
     setShowDebug(false);
     setShowGreenGuide(false);
     setDetectionResult(initialDetection);
@@ -1235,6 +1355,10 @@ export default function CameraView() {
     : captureQuality === "warning"
       ? "0 4px 20px rgba(202,138,4,0.42)"
       : "none";
+  const actualZoomLabel = cameraMetadata?.actualZoom === null || cameraMetadata?.actualZoom === undefined
+    ? "-"
+    : cameraMetadata.actualZoom.toFixed(1);
+  const zoomSupportLabel = cameraMetadata ? (cameraMetadata.zoomSupported ? "対応" : "非対応") : "-";
 
   if (state === "idle") {
     return (
@@ -1518,6 +1642,51 @@ export default function CameraView() {
         pointerEvents: "auto",
         transition: "opacity 0.3s",
       }}>
+        <div style={{
+          width: "100%",
+          maxWidth: "310px",
+          marginBottom: "10px",
+          padding: "10px 12px",
+          background: "rgba(15,23,42,0.78)",
+          border: "1px solid rgba(255,255,255,0.16)",
+          borderRadius: "12px",
+          color: "white",
+          fontSize: "12px",
+          textShadow: "0 1px 3px black",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+            <span style={{ color: "rgba(226,232,240,0.88)", fontWeight: 700 }}>撮影倍率</span>
+            <div style={{ display: "flex", gap: "6px" }}>
+              {([1, 2] as const).map((zoom) => {
+                const selected = requestedZoom === zoom;
+                return (
+                  <button
+                    key={zoom}
+                    type="button"
+                    onClick={() => setRequestedZoom(zoom)}
+                    aria-pressed={selected}
+                    style={{
+                      minWidth: "44px",
+                      padding: "7px 10px",
+                      background: selected ? "#2563eb" : "rgba(30,41,59,0.92)",
+                      color: "white",
+                      border: selected ? "1px solid rgba(147,197,253,0.9)" : "1px solid rgba(148,163,184,0.32)",
+                      borderRadius: "10px",
+                      fontSize: "13px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {zoom}x
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "8px", color: "rgba(203,213,225,0.92)" }}>
+            <span>現在の実倍率: {actualZoomLabel}</span>
+            <span>ズーム制御: {zoomSupportLabel}</span>
+          </div>
+        </div>
         <button onClick={doCapture} style={{
           width: "100%", maxWidth: "280px", padding: "14px",
           background: captureButtonColor, color: "white",
