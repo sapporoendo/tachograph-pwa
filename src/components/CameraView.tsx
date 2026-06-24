@@ -1453,6 +1453,9 @@ export default function CameraView() {
     : captureQuality === "warning"
       ? "0 4px 20px rgba(202,138,4,0.42)"
       : "none";
+  const captureStatusLabel = detectionResult.canCapture ? "撮影できます" : "撮り直し推奨";
+  const captureQualityLabel = captureQuality === "good" ? "良好" : captureQuality === "warning" ? "注意" : "手動確認";
+  const captureQualityTextColor = captureQuality === "good" ? "#86efac" : captureQuality === "warning" ? "#fde68a" : "#cbd5e1";
   const actualZoomLabel = cameraMetadata?.actualZoom === null || cameraMetadata?.actualZoom === undefined
     ? "-"
     : cameraMetadata.actualZoom.toFixed(1);
@@ -1611,102 +1614,35 @@ export default function CameraView() {
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
       />
 
-      <button
-        onClick={() => setShowDebug((value) => !value)}
-        style={{
-          position: "absolute",
-          top: "calc(env(safe-area-inset-top, 0px) + 8px)",
-          right: "10px",
-          zIndex: 45,
-          padding: "8px 10px",
-          background: "rgba(0,0,0,0.58)",
-          color: "white",
-          border: "1px solid rgba(255,255,255,0.2)",
-          borderRadius: "10px",
-          fontSize: "12px",
-        }}
-      >
-        {showDebug ? "詳細を閉じる" : "詳細"}
-      </button>
-
-      {showDebug && <div style={{
+      <div style={{
         position: "absolute",
-        top: "calc(env(safe-area-inset-top, 0px) + 46px)",
-        left: "8px",
-        right: "8px",
-        zIndex: 40,
-        maxHeight: "32vh",
-        overflow: "auto",
-        padding: "8px 10px",
-        color: "white",
-        fontSize: "11px",
-        lineHeight: 1.45,
-        fontFamily: "monospace",
-        wordBreak: "break-all",
-        background: "rgba(0,0,0,0.72)",
-        border: "1px solid rgba(255,255,255,0.18)",
-        borderRadius: "10px",
-        textShadow: "0 1px 2px black",
+        top: "calc(env(safe-area-inset-top, 0px) + 10px)",
+        left: "12px",
+        right: "12px",
+        zIndex: 20,
+        display: "flex",
+        justifyContent: "center",
+        pointerEvents: "none",
       }}>
-        false reason: {canCaptureBlockReason}
-        <br />
-        showGreen false reason: {showGreenGuide ? "none" : showGreenGuideBlockReason}
-        <br />
-        detection frames: {detectionFrameRef.current}
-        <br />
-        canCapture: {String(detectionResult.canCapture)} / showGreenGuide: {String(showGreenGuide)} / quality: {captureQuality}
-        <br />
-        stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current}
-        <br />
-        captureHoldMs: {captureHoldRemainingMs}
-        <br />
-        raw_center_x: {rawCenter.x === null ? "-" : rawCenter.x.toFixed(1)} / raw_center_y: {rawCenter.y === null ? "-" : rawCenter.y.toFixed(1)}
-        <br />
-        smoothed_center_x: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)} / smoothed_center_y: {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
-        <br />
-        confidence: {detectionResult.confidence.toFixed(2)} / isAligned: {String(detectionResult.isAligned)}
-        <br />
-        outerRatio: {detectionResult.outerRatio.toFixed(2)} / min: {OUTER_RATIO_MIN.toFixed(2)}
-        <br />
-        centerOffset: {centerOffset === null ? "-" : centerOffset.toFixed(1)} / goodMax: {(ANALYSIS_SIZE * QUALITY_GOOD_ALIGNMENT_RATIO).toFixed(1)}
-        <br />
-        good reason: {goodBlockReasons || "none"}
-        <br />
-        goodMin confidence: {QUALITY_GOOD_MIN_CONFIDENCE.toFixed(2)} / outerRatio: {QUALITY_GOOD_OUTER_RATIO_MIN.toFixed(2)}
-        <br />
-        outerWarning: {String(detectionResult.outerWarning)} / isDistanceOk: {String(detectionResult.isDistanceOk)}
-        <br />
-        rawOuterRadius: {rawOuterRadius.toFixed(1)} / display: {showGreenGuide ? "green" : detectionResult.status === "too_far" ? "yellow" : detectionResult.status === "too_close" ? "red" : "white"}
-        <br />
-        selected camera label: {selectedCamera.label ?? "-"}
-        <br />
-        selected deviceId: {selectedCamera.deviceId ?? "-"}
-        <br />
-        track: {selectedCamera.width ?? "-"}x{selectedCamera.height ?? "-"} / facingMode: {selectedCamera.facingMode ?? "-"}
-      </div>}
-
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10, pointerEvents: "none" }}>
         <div style={{
-          marginBottom: "12px", padding: "8px 20px", borderRadius: "999px",
-          background: "rgba(0,0,0,0.55)",
+          padding: "8px 14px",
+          borderRadius: "999px",
+          background: "rgba(0,0,0,0.52)",
           color: "white",
-          fontSize: "15px", fontWeight: "bold", textShadow: "0 1px 4px black",
-          transition: "color 0.3s",
-        }}>
-          中心を十字に合わせて撮影してください
-        </div>
-        <div style={{
-          marginBottom: "10px", padding: "7px 14px", borderRadius: "12px",
-          background: "rgba(0,0,0,0.42)",
-          color: "rgba(255,255,255,0.86)",
-          fontSize: "12px", lineHeight: 1.5, textAlign: "center",
+          fontSize: "13px",
+          fontWeight: 700,
+          textAlign: "center",
           textShadow: "0 1px 3px black",
         }}>
           12時を上に / 外周を円に合わせる
         </div>
+      </div>
 
+      <div style={{ position: "absolute", top: "58px", left: 0, right: 0, bottom: "150px", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, pointerEvents: "none" }}>
         <div style={{
-          position: "relative", width: `${GUIDE_DISPLAY_RATIO * 100}vw`, height: `${GUIDE_DISPLAY_RATIO * 100}vw`, maxWidth: `${GUIDE_MAX_SIZE}px`, maxHeight: `${GUIDE_MAX_SIZE}px`,
+          position: "relative",
+          width: `min(${GUIDE_DISPLAY_RATIO * 100}vw, ${GUIDE_MAX_SIZE}px, calc(100vh - 250px))`,
+          height: `min(${GUIDE_DISPLAY_RATIO * 100}vw, ${GUIDE_MAX_SIZE}px, calc(100vh - 250px))`,
           filter: captureQuality === "good" ? "drop-shadow(0 0 16px rgba(74,222,128,0.7))" : "none",
           transition: "filter 0.3s",
         }}>
@@ -1737,16 +1673,12 @@ export default function CameraView() {
 
           </svg>
         </div>
-
-        <div style={{ marginTop: "8px", color: "rgba(255,255,255,0.4)", fontSize: "11px" }}>
-          外周位置: {(detectionResult.outerRatio * 100).toFixed(1)}% / 中心信頼度: {(detectionResult.confidence * 100).toFixed(0)}%
-        </div>
       </div>
 
       <div style={{
         position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 20,
-        padding: "14px 20px calc(env(safe-area-inset-bottom, 0px) + 18px)",
-        background: "linear-gradient(to top, rgba(0,0,0,0.7), transparent)",
+        padding: "10px 16px calc(env(safe-area-inset-bottom, 0px) + 14px)",
+        background: "linear-gradient(to top, rgba(0,0,0,0.82), rgba(0,0,0,0.36), transparent)",
         display: "flex", flexDirection: "column", alignItems: "center",
         opacity: 1,
         pointerEvents: "auto",
@@ -1754,17 +1686,75 @@ export default function CameraView() {
       }}>
         <div style={{
           width: "100%",
-          maxWidth: "310px",
-          marginBottom: "10px",
-          padding: "10px 12px",
-          background: "rgba(15,23,42,0.78)",
-          border: "1px solid rgba(255,255,255,0.16)",
-          borderRadius: "12px",
+          maxWidth: "360px",
+          marginBottom: "8px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
           color: "white",
-          fontSize: "12px",
           textShadow: "0 1px 3px black",
         }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: "17px", fontWeight: 800, lineHeight: 1.2 }}>{captureStatusLabel}</div>
+            <div style={{ marginTop: "3px", color: "rgba(226,232,240,0.84)", fontSize: "12px", lineHeight: 1.3 }}>
+              {detectionResult.message}
+            </div>
+          </div>
+          <div style={{
+            flexShrink: 0,
+            padding: "6px 10px",
+            borderRadius: "999px",
+            background: "rgba(15,23,42,0.76)",
+            border: "1px solid rgba(255,255,255,0.14)",
+            color: captureQualityTextColor,
+            fontSize: "12px",
+            fontWeight: 700,
+          }}>
+            品質: {captureQualityLabel}
+          </div>
+        </div>
+        <button onClick={doCapture} style={{
+          width: "100%", maxWidth: "360px", padding: "15px",
+          background: captureButtonColor, color: "white",
+          borderRadius: "14px", fontSize: "18px", fontWeight: "bold", border: "none",
+          boxShadow: captureButtonShadow,
+        }}>
+          📸 {captureButtonLabel}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowDebug((value) => !value)}
+          style={{
+            marginTop: "8px",
+            padding: "6px 10px",
+            background: "rgba(15,23,42,0.62)",
+            color: "rgba(226,232,240,0.86)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: "999px",
+            fontSize: "12px",
+          }}
+        >
+          {showDebug ? "▼ 詳細情報（開発用）" : "▶ 詳細情報（開発用）"}
+        </button>
+        {showDebug && <div style={{
+          width: "100%",
+          maxWidth: "360px",
+          maxHeight: "32vh",
+          overflow: "auto",
+          marginTop: "8px",
+          padding: "10px",
+          color: "white",
+          fontSize: "11px",
+          lineHeight: 1.5,
+          fontFamily: "monospace",
+          wordBreak: "break-all",
+          background: "rgba(15,23,42,0.88)",
+          border: "1px solid rgba(255,255,255,0.16)",
+          borderRadius: "10px",
+          textShadow: "0 1px 2px black",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", marginBottom: "8px" }}>
             <span style={{ color: "rgba(226,232,240,0.88)", fontWeight: 700 }}>撮影倍率</span>
             <div style={{ display: "flex", gap: "6px" }}>
               {([1, 2] as const).map((zoom) => {
@@ -1792,38 +1782,36 @@ export default function CameraView() {
               })}
             </div>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "8px", color: "rgba(203,213,225,0.92)" }}>
-            <span>現在の実倍率: {actualZoomLabel}</span>
-            <span>ズーム制御: {zoomSupportLabel}</span>
-          </div>
-          <div style={{ marginTop: "5px", color: zoomApplyState.error ? "#fecaca" : "rgba(203,213,225,0.92)" }}>
-            実ズーム: {zoomApplyLabel}
-          </div>
-          <div style={{ marginTop: "7px", color: "rgba(203,213,225,0.78)", fontSize: "11px", lineHeight: 1.4 }}>
-            試験機能です。非対応や失敗時も撮影できます
-          </div>
-        </div>
-        <button onClick={doCapture} style={{
-          width: "100%", maxWidth: "280px", padding: "14px",
-          background: captureButtonColor, color: "white",
-          borderRadius: "14px", fontSize: "18px", fontWeight: "bold", border: "none",
-          boxShadow: captureButtonShadow,
-        }}>
-          📸 {captureButtonLabel}
-        </button>
-        <div style={{
-          marginTop: "6px",
-          maxWidth: "310px",
-          color: "rgba(226,232,240,0.88)",
-          fontSize: "11px",
-          lineHeight: 1.45,
-          textAlign: "center",
-          textShadow: "0 1px 3px black",
-        }}>
-          緑にならなくても、中心と外周が目視で合っていれば撮影できます
+          actualZoom: {actualZoomLabel}
           <br />
-          解析用JSONに判定状態を保存します
-        </div>
+          zoomSupported: {zoomSupportLabel}
+          <br />
+          zoomApply: {zoomApplyLabel}
+          <br />
+          selectedCameraLabel: {selectedCamera.label ?? "-"}
+          <br />
+          confidence: {detectionResult.confidence.toFixed(2)}
+          <br />
+          captureQuality: {captureQuality}
+          <br />
+          cameraSettings: {selectedCamera.width ?? "-"}x{selectedCamera.height ?? "-"} / facingMode: {selectedCamera.facingMode ?? "-"}
+          <br />
+          false reason: {canCaptureBlockReason}
+          <br />
+          showGreen false reason: {showGreenGuide ? "none" : showGreenGuideBlockReason}
+          <br />
+          centerOffset: {centerOffset === null ? "-" : centerOffset.toFixed(1)} / goodMax: {(ANALYSIS_SIZE * QUALITY_GOOD_ALIGNMENT_RATIO).toFixed(1)}
+          <br />
+          outerRatio: {detectionResult.outerRatio.toFixed(2)} / rawOuterRadius: {rawOuterRadius.toFixed(1)}
+          <br />
+          stableOkFrames: {captureOkFramesRef.current} / stableNgFrames: {captureNgFramesRef.current} / holdMs: {captureHoldRemainingMs}
+          <br />
+          rawCenter: {rawCenter.x === null ? "-" : rawCenter.x.toFixed(1)}, {rawCenter.y === null ? "-" : rawCenter.y.toFixed(1)}
+          <br />
+          smoothedCenter: {detectionResult.centerX === null ? "-" : detectionResult.centerX.toFixed(1)}, {detectionResult.centerY === null ? "-" : detectionResult.centerY.toFixed(1)}
+          <br />
+          good reason: {goodBlockReasons || "none"}
+        </div>}
       </div>
 
       <canvas ref={analysisCanvasRef} style={{ display: "none" }} />
